@@ -241,6 +241,7 @@
                     <div style="display:flex;gap:6px;">
                         <button class="btn btn-outline" onclick="testTelegram()" style="padding:4px 10px; font-size:11px;">Test Telegram</button>
                         <button class="btn btn-outline" onclick="sendDailySummary()" style="padding:4px 10px; font-size:11px;">Send Summary</button>
+                        <button class="btn btn-primary" id="saveSettingsBtn" onclick="saveSettings()" style="padding:4px 10px; font-size:11px; display:none;">Save Changes</button>
                     </div>
                 </div>
                 <div class="panel-body">
@@ -403,24 +404,69 @@ function renderMarkets(markets) {
 async function loadConfig() {
     try {
         const cfg = await api('/api/config');
-        let html = '';
-        const items = [
-            ['Mode', cfg.trading_mode.toUpperCase()],
-            ['Bankroll', usd(cfg.initial_bankroll)],
-            ['Max Trade', usd(cfg.max_trade_size)],
-            ['Daily Loss Limit', usd(cfg.daily_loss_limit)],
-            ['Min Edge', pct(cfg.min_edge_threshold)],
-            ['Kelly Fraction', pct(cfg.kelly_fraction)],
-            ['Max Concurrent', cfg.max_concurrent_trades],
-            ['Scan Interval', cfg.scan_interval_seconds + 's'],
+        const fields = [
+            {label: 'Min Edge %', key: 'min_edge_threshold', val: (cfg.min_edge_threshold * 100).toFixed(1), type: 'number', step: '0.5', suffix: '%', convert: v => v / 100},
+            {label: 'Max Trade $', key: 'max_trade_size', val: cfg.max_trade_size, type: 'number', step: '25'},
+            {label: 'Daily Loss Limit $', key: 'daily_loss_limit', val: cfg.daily_loss_limit, type: 'number', step: '50'},
+            {label: 'Kelly Fraction %', key: 'kelly_fraction', val: (cfg.kelly_fraction * 100).toFixed(0), type: 'number', step: '5', suffix: '%', convert: v => v / 100},
+            {label: 'Bankroll $', key: 'initial_bankroll', val: cfg.initial_bankroll, type: 'number', step: '500'},
+            {label: 'Max Concurrent', key: 'max_concurrent_trades', val: cfg.max_concurrent_trades, type: 'number', step: '1'},
+            {label: 'Scan Interval (s)', key: 'scan_interval_seconds', val: cfg.scan_interval_seconds, type: 'number', step: '30'},
         ];
-        for (const [k, v] of items) {
-            html += `<div class="config-item"><span class="key">${k}</span><span class="val">${v}</span></div>`;
+        let html = '';
+        for (const f of fields) {
+            html += `<div class="config-item">
+                <span class="key">${f.label}</span>
+                <input class="cfg-input" data-key="${f.key}" data-convert="${f.convert ? 'pct' : ''}" 
+                    type="${f.type}" step="${f.step}" value="${f.val}" 
+                    style="background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:3px 8px;font-size:13px;font-weight:600;font-family:Consolas,monospace;width:80px;text-align:right;"
+                    onchange="onSettingChanged()">
+            </div>`;
         }
+        html += `<div class="config-item"><span class="key">Mode</span><span class="val">${cfg.trading_mode.toUpperCase()}</span></div>`;
         $('configGrid').innerHTML = html;
+        $('saveSettingsBtn').style.display = 'none';
     } catch(e) {
         $('configGrid').innerHTML = '<p style="padding:16px;color:var(--text-dim)">Could not load config</p>';
     }
+}
+
+function onSettingChanged() {
+    $('saveSettingsBtn').style.display = 'inline-flex';
+}
+
+async function saveSettings() {
+    const btn = $('saveSettingsBtn');
+    btn.disabled = true;
+    btn.textContent = 'Saving...';
+
+    const inputs = document.querySelectorAll('.cfg-input');
+    const data = {};
+    for (const input of inputs) {
+        let val = parseFloat(input.value);
+        if (input.dataset.convert === 'pct') val = val / 100;
+        data[input.dataset.key] = val;
+    }
+
+    try {
+        const resp = await fetch('/api/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(data),
+        });
+        const result = await resp.json();
+        if (result.error) {
+            addLog('Settings save failed: ' + result.error, 'error');
+        } else {
+            addLog(`Saved ${result.count} settings (persisted to .env)`, 'success');
+            btn.style.display = 'none';
+        }
+    } catch(e) {
+        addLog('Settings save failed: ' + e.message, 'error');
+    }
+
+    btn.disabled = false;
+    btn.textContent = 'Save Changes';
 }
 
 async function manualScan() {

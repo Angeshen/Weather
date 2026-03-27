@@ -276,7 +276,59 @@ def api_set_mode():
         return jsonify({"error": "Mode must be 'paper' or 'live'"}), 400
 
     settings.trading_mode = new_mode
+    _save_setting_to_env("TRADING_MODE", new_mode)
     return jsonify({"trading_mode": settings.trading_mode})
+
+
+@app.route("/api/settings", methods=["POST"])
+def api_save_settings():
+    """Save settings to .env and apply them in memory."""
+    data = request.get_json() or {}
+    updated = []
+
+    # Map of JSON keys to (settings attr, env key, type)
+    editable = {
+        "trading_mode": ("trading_mode", "TRADING_MODE", str),
+        "min_edge_threshold": ("min_edge_threshold", "MIN_EDGE_THRESHOLD", float),
+        "max_trade_size": ("max_trade_size", "MAX_TRADE_SIZE", float),
+        "daily_loss_limit": ("daily_loss_limit", "DAILY_LOSS_LIMIT", float),
+        "kelly_fraction": ("kelly_fraction", "KELLY_FRACTION", float),
+        "scan_interval_seconds": ("scan_interval_seconds", "SCAN_INTERVAL_SECONDS", int),
+        "initial_bankroll": ("initial_bankroll", "INITIAL_BANKROLL", float),
+        "max_concurrent_trades": ("max_concurrent_trades", "MAX_CONCURRENT_TRADES", int),
+    }
+
+    for key, (attr, env_key, cast) in editable.items():
+        if key in data:
+            try:
+                val = cast(data[key])
+                setattr(settings, attr, val)
+                _save_setting_to_env(env_key, str(val))
+                updated.append(key)
+            except (ValueError, TypeError) as e:
+                return jsonify({"error": f"Invalid value for {key}: {e}"}), 400
+
+    return jsonify({"updated": updated, "count": len(updated)})
+
+
+def _save_setting_to_env(key: str, value: str):
+    """Update a single key in the .env file on disk."""
+    from pathlib import Path
+    env_path = Path(__file__).parent.parent.parent / ".env"
+    if not env_path.exists():
+        return
+
+    lines = env_path.read_text().splitlines()
+    found = False
+    for i, line in enumerate(lines):
+        if line.startswith(f"{key}="):
+            lines[i] = f"{key}={value}"
+            found = True
+            break
+    if not found:
+        lines.append(f"{key}={value}")
+
+    env_path.write_text("\n".join(lines) + "\n")
 
 
 @app.route("/api/equity")
