@@ -4,6 +4,7 @@ Parse market tickers to extract city, date, threshold, and market type.
 """
 
 import re
+import time
 from datetime import datetime
 from src.config import settings, CITY_CONFIG, SERIES_PREFIXES
 from src.data.kalshi_client import KalshiClient
@@ -105,7 +106,9 @@ def scan_weather_markets(client: KalshiClient) -> list[dict]:
     """
     all_markets = []
 
-    for series_ticker in settings.weather_series:
+    for i, series_ticker in enumerate(settings.weather_series):
+        if i > 0:
+            time.sleep(0.5)
         try:
             markets_result = client.get_markets(series_ticker=series_ticker, status="open")
 
@@ -134,7 +137,9 @@ def scan_weather_markets_public() -> list[dict]:
     all_markets = []
 
     with httpx.Client(timeout=30.0) as http:
-        for series_ticker in settings.weather_series:
+        for i, series_ticker in enumerate(settings.weather_series):
+            if i > 0:
+                time.sleep(0.5)
             try:
                 resp = http.get(
                     f"{base_url}/markets",
