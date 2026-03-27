@@ -1,0 +1,755 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kalshi Weather Bot</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            --bg: #0f1117; --surface: #1a1d27; --surface2: #232733;
+            --border: #2d3140; --text: #e4e6ed; --text-dim: #8b8fa3;
+            --accent: #6c5ce7; --green: #00d68f; --red: #ff6b6b;
+            --yellow: #ffd93d; --blue: #4ecdc4; --cyan: #74b9ff;
+        }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+
+        .header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 16px 24px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; }
+        .header h1 { font-size: 20px; font-weight: 700; display: flex; align-items: center; gap: 10px; }
+        .header h1 span { color: var(--cyan); }
+        .header-controls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+
+        .mode-badge { padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; }
+        .mode-paper { background: rgba(0, 214, 143, 0.15); color: var(--green); }
+        .mode-live { background: rgba(255, 107, 107, 0.15); color: var(--red); }
+
+        .mode-toggle { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; }
+        .mode-toggle .label-paper { color: var(--green); }
+        .mode-toggle .label-live { color: var(--red); }
+        .mode-toggle .label-dim { color: var(--text-dim); }
+        .toggle-switch { position: relative; width: 44px; height: 24px; cursor: pointer; }
+        .toggle-switch input { opacity: 0; width: 0; height: 0; }
+        .toggle-slider { position: absolute; inset: 0; background: var(--green); border-radius: 24px; transition: 0.3s; }
+        .toggle-slider::before { content: ''; position: absolute; width: 18px; height: 18px; left: 3px; bottom: 3px; background: white; border-radius: 50%; transition: 0.3s; }
+        .toggle-switch input:checked + .toggle-slider { background: var(--red); }
+        .toggle-switch input:checked + .toggle-slider::before { transform: translateX(20px); }
+
+        .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+        .status-dot.running { background: var(--green); box-shadow: 0 0 8px var(--green); }
+        .status-dot.stopped { background: var(--red); }
+
+        .btn { padding: 8px 16px; border: none; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.2s; display: inline-flex; align-items: center; gap: 6px; }
+        .btn:hover { transform: translateY(-1px); filter: brightness(1.1); }
+        .btn:active { transform: translateY(0); }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none !important; }
+        .btn-primary { background: var(--accent); color: white; }
+        .btn-green { background: var(--green); color: #000; }
+        .btn-red { background: var(--red); color: white; }
+        .btn-outline { background: transparent; color: var(--text); border: 1px solid var(--border); }
+        .btn-outline:hover { background: var(--surface2); }
+
+        .container { max-width: 1400px; margin: 0 auto; padding: 20px 24px; }
+
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 20px; }
+        .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+        .stat-card .label { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-dim); margin-bottom: 6px; }
+        .stat-card .value { font-size: 24px; font-weight: 700; }
+        .stat-card .value.green { color: var(--green); }
+        .stat-card .value.red { color: var(--red); }
+        .stat-card .value.cyan { color: var(--cyan); }
+
+        .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; margin-bottom: 16px; }
+        .panel-header { padding: 14px 16px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; font-weight: 600; font-size: 14px; }
+        .panel-body { padding: 0; max-height: 450px; overflow-y: auto; }
+
+        table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        thead th { padding: 10px 12px; text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-dim); background: var(--surface2); position: sticky; top: 0; }
+        tbody td { padding: 10px 12px; border-top: 1px solid var(--border); }
+        tbody tr:hover { background: var(--surface2); }
+
+        .edge-high { color: var(--green); font-weight: 700; }
+        .edge-medium { color: var(--yellow); font-weight: 600; }
+        .dir-above { color: var(--red); font-weight: 600; }
+        .dir-below { color: var(--blue); font-weight: 600; }
+        .pnl-pos { color: var(--green); font-weight: 600; }
+        .pnl-neg { color: var(--red); font-weight: 600; }
+
+        .empty-state { padding: 40px 20px; text-align: center; color: var(--text-dim); }
+        .empty-state .icon { font-size: 32px; margin-bottom: 8px; }
+
+        .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--cyan); border-radius: 50%; animation: spin 0.8s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .config-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 24px; padding: 16px; font-size: 13px; }
+        .config-item { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border); }
+        .config-item .key { color: var(--text-dim); }
+        .config-item .val { font-weight: 600; font-family: 'Consolas', monospace; }
+
+        .last-scan { font-size: 12px; color: var(--text-dim); }
+
+        .log-container { padding: 12px 16px; font-family: 'Consolas', monospace; font-size: 12px; max-height: 250px; overflow-y: auto; }
+        .log-entry { padding: 3px 0; color: var(--text-dim); }
+        .log-entry.info { color: var(--cyan); }
+        .log-entry.success { color: var(--green); }
+        .log-entry.warn { color: var(--yellow); }
+        .log-entry.error { color: var(--red); }
+
+        .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        @media (max-width: 900px) { .two-col { grid-template-columns: 1fr; } }
+        /* Mobile responsive */
+        @media (max-width: 768px) {
+            .header { padding: 12px 16px; }
+            .header h1 { font-size: 16px; }
+            .header-controls { gap: 8px; }
+            .container { padding: 12px 12px; }
+            .stats-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+            .stat-card { padding: 10px; }
+            .stat-card .value { font-size: 18px; }
+            .panel-body { max-height: 350px; }
+            table { font-size: 11px; }
+            thead th, tbody td { padding: 6px 8px; }
+            .config-grid { grid-template-columns: 1fr; }
+            .btn { padding: 6px 10px; font-size: 12px; }
+            .mode-toggle { font-size: 11px; }
+            .chart-container { height: 200px !important; }
+        }
+        @media (max-width: 480px) {
+            .stats-grid { grid-template-columns: 1fr 1fr; }
+            .header-controls { justify-content: center; }
+        }
+
+        .chart-container { position: relative; height: 250px; padding: 16px; }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <div class="header">
+        <h1>
+            <svg width="22" height="22" fill="none" stroke="var(--cyan)" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+            <span>Kalshi Weather Bot</span>
+        </h1>
+        <div class="header-controls">
+            <span class="last-scan" id="lastScan">No scans yet</span>
+            <div class="mode-toggle">
+                <span id="labelPaper" class="label-paper">PAPER</span>
+                <label class="toggle-switch" title="Switch between Paper and Live mode">
+                    <input type="checkbox" id="modeToggle" onchange="toggleMode()">
+                    <span class="toggle-slider"></span>
+                </label>
+                <span id="labelLive" class="label-dim">LIVE</span>
+            </div>
+            <span class="status-dot stopped" id="statusDot" title="Bot status"></span>
+            <button class="btn btn-outline" id="scanBtn" onclick="manualScan()">Scan Now</button>
+            <button class="btn btn-green" id="startBtn" onclick="startBot()">Start Bot</button>
+            <button class="btn btn-red" id="stopBtn" onclick="stopBot()" style="display:none">Stop Bot</button>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="stats-grid">
+            <div class="stat-card"><div class="label">Bankroll</div><div class="value cyan" id="statBankroll">$5,000</div></div>
+            <div class="stat-card"><div class="label">Total P&amp;L</div><div class="value" id="statPnl">$0.00</div></div>
+            <div class="stat-card"><div class="label">Open Trades</div><div class="value" id="statOpen">0</div></div>
+            <div class="stat-card"><div class="label">Win Rate</div><div class="value" id="statWinRate">0%</div></div>
+            <div class="stat-card"><div class="label">Total Trades</div><div class="value" id="statTotal">0</div></div>
+            <div class="stat-card"><div class="label">Markets Found</div><div class="value" id="statMarkets">0</div></div>
+            <div class="stat-card"><div class="label">Active Signals</div><div class="value green" id="statSignals">0</div></div>
+            <div class="stat-card"><div class="label">Scans</div><div class="value" id="statScans">0</div></div>
+        </div>
+
+        <!-- Equity Curve -->
+        <div class="panel">
+            <div class="panel-header">
+                <span>Equity Curve</span>
+                <button class="btn btn-outline" onclick="checkSettlement()" style="padding:4px 10px; font-size:11px;">Check Settlements</button>
+            </div>
+            <div class="panel-body" style="max-height:none; overflow:visible;">
+                <div class="chart-container">
+                    <canvas id="equityChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Signals -->
+        <div class="panel">
+            <div class="panel-header">
+                <span>Trade Signals</span>
+                <span class="last-scan" id="signalCount">0 signals</span>
+            </div>
+            <div class="panel-body" id="signalsBody">
+                <div class="empty-state"><div class="icon">&#128269;</div><p>Click "Scan Now" to find trade signals</p></div>
+            </div>
+        </div>
+
+        <!-- Markets + Trades -->
+        <div class="two-col">
+            <div class="panel">
+                <div class="panel-header">
+                    <span>Open Weather Markets</span>
+                    <span class="last-scan" id="marketCount">0 markets</span>
+                </div>
+                <div class="panel-body" id="marketsBody">
+                    <div class="empty-state"><div class="icon">&#127782;&#65039;</div><p>Markets will appear after scanning</p></div>
+                </div>
+            </div>
+            <div class="panel">
+                <div class="panel-header">
+                    <span>Trade History</span>
+                    <div style="display:flex;gap:8px;align-items:center;">
+                        <span class="last-scan" id="tradeCount">0 trades</span>
+                    </div>
+                </div>
+                <div class="panel-body" id="tradesBody">
+                    <div class="empty-state"><div class="icon">&#128202;</div><p>No trades yet</p></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Backtest -->
+        <div class="panel">
+            <div class="panel-header">
+                <span>Historical Backtest</span>
+                <div style="display:flex;gap:6px;align-items:center;">
+                    <select id="backtestDays" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 8px;font-size:12px;">
+                        <option value="7">7 days</option>
+                        <option value="14">14 days</option>
+                        <option value="30" selected>30 days</option>
+                        <option value="60">60 days</option>
+                        <option value="90">90 days</option>
+                    </select>
+                    <button class="btn btn-outline" id="backtestBtn" onclick="runBacktest()" style="padding:4px 10px; font-size:11px;">Run Backtest</button>
+                </div>
+            </div>
+            <div class="panel-body" id="backtestBody">
+                <div class="empty-state"><div class="icon">&#128200;</div><p>Run a backtest to see simulated historical performance</p></div>
+            </div>
+        </div>
+
+        <!-- Log + Config -->
+        <div class="two-col">
+            <div class="panel">
+                <div class="panel-header"><span>Activity Log</span><button class="btn btn-outline" onclick="clearLog()" style="padding:4px 10px; font-size:11px;">Clear</button></div>
+                <div class="panel-body">
+                    <div class="log-container" id="logContainer">
+                        <div class="log-entry info">Bot dashboard loaded.</div>
+                    </div>
+                </div>
+            </div>
+            <div class="panel">
+                <div class="panel-header">
+                    <span>Configuration</span>
+                    <div style="display:flex;gap:6px;">
+                        <button class="btn btn-outline" onclick="testTelegram()" style="padding:4px 10px; font-size:11px;">Test Telegram</button>
+                        <button class="btn btn-outline" onclick="sendDailySummary()" style="padding:4px 10px; font-size:11px;">Send Summary</button>
+                    </div>
+                </div>
+                <div class="panel-body">
+                    <div class="config-grid" id="configGrid">Loading...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+<script>
+const API = '';
+let refreshTimer = null;
+
+function $(id) { return document.getElementById(id); }
+
+function addLog(msg, type = '') {
+    const el = $('logContainer');
+    const time = new Date().toLocaleTimeString();
+    const div = document.createElement('div');
+    div.className = 'log-entry ' + type;
+    div.textContent = `[${time}] ${msg}`;
+    el.appendChild(div);
+    el.scrollTop = el.scrollHeight;
+}
+
+function clearLog() { $('logContainer').innerHTML = ''; }
+
+async function api(path, method = 'GET') {
+    const resp = await fetch(API + path, { method });
+    return resp.json();
+}
+
+function pct(v) { return (v * 100).toFixed(1) + '%'; }
+function usd(v) { return '$' + Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+
+async function refreshStats() {
+    try {
+        const stats = await api('/api/stats');
+        $('statBankroll').textContent = usd(stats.bankroll);
+        $('statPnl').textContent = usd(stats.total_pnl);
+        $('statPnl').className = 'value ' + (stats.total_pnl >= 0 ? 'green' : 'red');
+        $('statOpen').textContent = stats.open_trades;
+        $('statWinRate').textContent = stats.win_rate.toFixed(1) + '%';
+        $('statTotal').textContent = stats.total_trades;
+    } catch(e) {}
+}
+
+async function refreshStatus() {
+    try {
+        const status = await api('/api/status');
+        const dot = $('statusDot');
+        dot.className = 'status-dot ' + (status.running ? 'running' : 'stopped');
+        dot.title = status.running ? 'Bot is running' : 'Bot is stopped';
+        updateModeUI(status.mode);
+        $('statScans').textContent = status.scan_count;
+
+        if (status.running) {
+            $('startBtn').style.display = 'none';
+            $('stopBtn').style.display = 'inline-flex';
+        } else {
+            $('startBtn').style.display = 'inline-flex';
+            $('stopBtn').style.display = 'none';
+        }
+
+        if (status.last_scan) {
+            const d = new Date(status.last_scan);
+            $('lastScan').textContent = 'Last scan: ' + d.toLocaleTimeString();
+        }
+    } catch(e) {}
+}
+
+async function refreshTrades() {
+    try {
+        const trades = await api('/api/trades?limit=20');
+        $('tradeCount').textContent = trades.length + ' trades';
+        if (!trades.length) {
+            $('tradesBody').innerHTML = '<div class="empty-state"><div class="icon">&#128202;</div><p>No trades yet</p></div>';
+            return;
+        }
+        let html = '<table><thead><tr><th>#</th><th>Time</th><th>Ticker</th><th>Side</th><th>Edge</th><th>Size</th><th>Status</th><th>P&L</th><th>Note</th></tr></thead><tbody>';
+        for (const t of trades) {
+            const pnlClass = (t.pnl_usd || 0) > 0 ? 'pnl-pos' : (t.pnl_usd || 0) < 0 ? 'pnl-neg' : '';
+            const pnl = t.pnl_usd ? usd(t.pnl_usd) : '—';
+            const time = t.timestamp ? t.timestamp.substring(11, 16) : '?';
+            const note = t.note || '';
+            html += `<tr>
+                <td>${t.id}</td>
+                <td>${time}</td>
+                <td>${t.ticker || '?'}</td>
+                <td class="${(t.direction||'').includes('ABOVE') || (t.direction||'').includes('YES') ? 'dir-above' : 'dir-below'}">${(t.side||'').toUpperCase()}</td>
+                <td>${t.edge ? pct(t.edge) : '?'}</td>
+                <td>${t.position_size_usd ? usd(t.position_size_usd) : '?'}</td>
+                <td>${t.status}</td>
+                <td class="${pnlClass}">${pnl}</td>
+                <td><input id="note-${t.id}" value="${note.replace(/"/g,'&quot;')}" placeholder="Add note..." onblur="saveNote(${t.id})" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:2px 6px;font-size:11px;width:100px;"></td>
+            </tr>`;
+        }
+        html += '</tbody></table>';
+        $('tradesBody').innerHTML = html;
+    } catch(e) {}
+}
+
+function renderSignals(signals) {
+    $('signalCount').textContent = signals.length + ' signals';
+    $('statSignals').textContent = signals.length;
+    if (!signals.length) {
+        $('signalsBody').innerHTML = '<div class="empty-state"><div class="icon">&#9989;</div><p>No actionable signals — market prices align with forecasts</p></div>';
+        return;
+    }
+    let html = '<table><thead><tr><th>City</th><th>Type</th><th>Date</th><th>Threshold</th><th>Direction</th><th>Model</th><th>Market</th><th>Edge</th><th>Confidence</th><th>Size</th><th>Forecast</th></tr></thead><tbody>';
+    for (const s of signals) {
+        const edgeClass = s.edge >= 0.15 ? 'edge-high' : 'edge-medium';
+        const dirClass = s.direction.includes('ABOVE') || s.direction.includes('YES') ? 'dir-above' : 'dir-below';
+        const unit = s.unit || '\u00b0F';
+        const typeLabel = {'high_temp':'High','low_temp':'Low','precipitation':'Rain'}[s.market_type] || s.market_type;
+        html += `<tr>
+            <td><strong>${s.city}</strong></td>
+            <td>${typeLabel}</td>
+            <td>${s.target_date}</td>
+            <td>${s.threshold_f}${unit}</td>
+            <td class="${dirClass}">${s.direction}</td>
+            <td>${pct(s.model_prob)}</td>
+            <td>${pct(s.market_price)}</td>
+            <td class="${edgeClass}">${pct(s.edge)}</td>
+            <td>${pct(s.confidence)}</td>
+            <td>${usd(s.position_size_usd)}</td>
+            <td>${s.forecast_mean}${unit} (${s.forecast_min}-${s.forecast_max})</td>
+        </tr>`;
+    }
+    html += '</tbody></table>';
+    $('signalsBody').innerHTML = html;
+}
+
+function renderMarkets(markets) {
+    $('marketCount').textContent = markets.length + ' markets';
+    $('statMarkets').textContent = markets.length;
+    if (!markets.length) {
+        $('marketsBody').innerHTML = '<div class="empty-state"><div class="icon">&#127782;&#65039;</div><p>No open markets found</p></div>';
+        return;
+    }
+    let html = '<table><thead><tr><th>Ticker</th><th>City</th><th>Type</th><th>Date</th><th>Threshold</th><th>Yes Bid</th><th>Yes Ask</th><th>Volume</th></tr></thead><tbody>';
+    for (const m of markets) {
+        const unit = m.unit || '\u00b0F';
+        const typeLabel = {'high_temp':'High','low_temp':'Low','precipitation':'Rain'}[m.market_type] || '?';
+        html += `<tr>
+            <td><code>${m.ticker}</code></td>
+            <td>${m.city}</td>
+            <td>${typeLabel}</td>
+            <td>${m.target_date}</td>
+            <td>${m.threshold_f}${unit}</td>
+            <td>${m.yes_bid != null ? pct(m.yes_bid) : '\u2014'}</td>
+            <td>${m.yes_ask != null ? pct(m.yes_ask) : '\u2014'}</td>
+            <td>${m.volume || 0}</td>
+        </tr>`;
+    }
+    html += '</tbody></table>';
+    $('marketsBody').innerHTML = html;
+}
+
+async function loadConfig() {
+    try {
+        const cfg = await api('/api/config');
+        let html = '';
+        const items = [
+            ['Mode', cfg.trading_mode.toUpperCase()],
+            ['Bankroll', usd(cfg.initial_bankroll)],
+            ['Max Trade', usd(cfg.max_trade_size)],
+            ['Daily Loss Limit', usd(cfg.daily_loss_limit)],
+            ['Min Edge', pct(cfg.min_edge_threshold)],
+            ['Kelly Fraction', pct(cfg.kelly_fraction)],
+            ['Max Concurrent', cfg.max_concurrent_trades],
+            ['Scan Interval', cfg.scan_interval_seconds + 's'],
+        ];
+        for (const [k, v] of items) {
+            html += `<div class="config-item"><span class="key">${k}</span><span class="val">${v}</span></div>`;
+        }
+        $('configGrid').innerHTML = html;
+    } catch(e) {
+        $('configGrid').innerHTML = '<p style="padding:16px;color:var(--text-dim)">Could not load config</p>';
+    }
+}
+
+async function manualScan() {
+    const btn = $('scanBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Scanning...';
+    addLog('Running manual scan...', 'info');
+
+    try {
+        const result = await api('/api/scan', 'POST');
+        if (result.error) {
+            addLog('Scan error: ' + result.error, 'error');
+        } else {
+            addLog(`Scan complete: ${result.markets_count} markets, ${result.signals.length} signals`, 'success');
+            renderSignals(result.signals);
+
+            const markets = await api('/api/markets');
+            renderMarkets(markets);
+        }
+        await refreshStats();
+        await refreshStatus();
+        await refreshTrades();
+    } catch(e) {
+        addLog('Scan failed: ' + e.message, 'error');
+    }
+
+    btn.disabled = false;
+    btn.innerHTML = 'Scan Now';
+}
+
+async function startBot() {
+    addLog('Starting bot...', 'info');
+    try {
+        const result = await api('/api/bot/start', 'POST');
+        addLog('Bot ' + result.status, 'success');
+        await refreshStatus();
+
+        if (!refreshTimer) {
+            refreshTimer = setInterval(async () => {
+                await refreshStats();
+                await refreshStatus();
+                await refreshTrades();
+                const signals = await api('/api/signals');
+                renderSignals(signals);
+                const markets = await api('/api/markets');
+                renderMarkets(markets);
+            }, 15000);
+        }
+    } catch(e) {
+        addLog('Failed to start bot: ' + e.message, 'error');
+    }
+}
+
+async function stopBot() {
+    addLog('Stopping bot...', 'warn');
+    try {
+        const result = await api('/api/bot/stop', 'POST');
+        addLog('Bot ' + result.status, 'success');
+        await refreshStatus();
+        if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
+    } catch(e) {
+        addLog('Failed to stop bot: ' + e.message, 'error');
+    }
+}
+
+async function toggleMode() {
+    const toggle = $('modeToggle');
+    const newMode = toggle.checked ? 'live' : 'paper';
+
+    if (newMode === 'live') {
+        if (!confirm('Switch to LIVE trading? This will use real money on Kalshi.')) {
+            toggle.checked = false;
+            return;
+        }
+    }
+
+    try {
+        const resp = await fetch('/api/mode', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({mode: newMode}) });
+        const result = await resp.json();
+        if (result.error) {
+            addLog('Mode switch failed: ' + result.error, 'error');
+            toggle.checked = !toggle.checked;
+            return;
+        }
+        updateModeUI(result.trading_mode);
+        addLog('Switched to ' + result.trading_mode.toUpperCase() + ' mode', result.trading_mode === 'live' ? 'warn' : 'success');
+        await loadConfig();
+    } catch(e) {
+        addLog('Mode switch failed: ' + e.message, 'error');
+        toggle.checked = !toggle.checked;
+    }
+}
+
+function updateModeUI(mode) {
+    const toggle = $('modeToggle');
+    toggle.checked = (mode === 'live');
+    $('labelPaper').className = mode === 'paper' ? 'label-paper' : 'label-dim';
+    $('labelLive').className = mode === 'live' ? 'label-live' : 'label-dim';
+}
+
+async function testTelegram() {
+    addLog('Sending Telegram test message...', 'info');
+    try {
+        const resp = await fetch('/api/telegram/test', { method: 'POST' });
+        const result = await resp.json();
+        if (result.error) {
+            addLog('Telegram test failed: ' + result.error, 'error');
+        } else {
+            addLog('Telegram test message sent! Check your phone.', 'success');
+        }
+    } catch(e) {
+        addLog('Telegram test failed: ' + e.message, 'error');
+    }
+}
+
+async function sendDailySummary() {
+    addLog('Sending daily summary to Telegram...', 'info');
+    try {
+        const resp = await fetch('/api/telegram/daily', { method: 'POST' });
+        const result = await resp.json();
+        if (result.error) {
+            addLog('Daily summary failed: ' + result.error, 'error');
+        } else {
+            addLog('Daily summary sent to Telegram!', 'success');
+        }
+    } catch(e) {
+        addLog('Daily summary failed: ' + e.message, 'error');
+    }
+}
+
+// Equity Chart
+let equityChart = null;
+
+async function loadEquityChart() {
+    try {
+        const data = await api('/api/equity');
+        const bh = data.bankroll_history || [];
+        const st = data.settled_trades || [];
+
+        const canvas = $('equityChart');
+        if (!canvas) return;
+
+        // Bankroll over time
+        const labels = bh.map(p => {
+            const d = new Date(p.timestamp);
+            return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+        });
+        const bankrollData = bh.map(p => p.bankroll);
+
+        // Cumulative P&L from settled trades
+        const pnlLabels = st.map((p, i) => '#' + (i + 1));
+        const pnlData = st.map(p => p.cumulative_pnl);
+
+        if (equityChart) equityChart.destroy();
+
+        const hasData = bankrollData.length > 0 || pnlData.length > 0;
+        if (!hasData) {
+            canvas.parentElement.innerHTML = '<div class="empty-state"><div class="icon">📈</div><p>Chart will appear after trades are placed</p></div>';
+            return;
+        }
+
+        const datasets = [];
+        let finalLabels = labels;
+
+        if (bankrollData.length > 0) {
+            datasets.push({
+                label: 'Bankroll',
+                data: bankrollData,
+                borderColor: '#4ecdc4',
+                backgroundColor: 'rgba(78, 205, 196, 0.1)',
+                fill: true,
+                tension: 0.3,
+                pointRadius: 2,
+            });
+        }
+
+        if (pnlData.length > 0 && bankrollData.length === 0) {
+            finalLabels = pnlLabels;
+            datasets.push({
+                label: 'Cumulative P&L',
+                data: pnlData,
+                borderColor: '#00d68f',
+                backgroundColor: 'rgba(0, 214, 143, 0.1)',
+                fill: true,
+                tension: 0.3,
+                pointRadius: 3,
+            });
+        }
+
+        equityChart = new Chart(canvas, {
+            type: 'line',
+            data: { labels: finalLabels, datasets },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { labels: { color: '#8b8fa3', font: { size: 11 } } },
+                },
+                scales: {
+                    x: { ticks: { color: '#8b8fa3', maxTicksLimit: 8, font: { size: 10 } }, grid: { color: 'rgba(45,49,64,0.5)' } },
+                    y: { ticks: { color: '#8b8fa3', callback: v => '$' + v.toLocaleString() }, grid: { color: 'rgba(45,49,64,0.5)' } },
+                },
+            },
+        });
+    } catch(e) {}
+}
+
+async function checkSettlement() {
+    addLog('Checking for settlements...', 'info');
+    try {
+        const resp = await fetch('/api/settle', { method: 'POST' });
+        const result = await resp.json();
+        if (result.settled > 0) {
+            addLog(`Settled ${result.settled} trades: ${result.wins}W / ${result.losses}L, P&L: $${result.total_pnl.toFixed(2)}`, 'success');
+            for (const r of result.results || []) {
+                const icon = r.won ? '✅' : '❌';
+                addLog(`  ${icon} ${r.city} ${r.target_date} — Actual: ${r.actual}${r.unit} vs ${r.threshold}${r.unit} → $${r.pnl.toFixed(2)}`, r.won ? 'success' : 'error');
+            }
+        } else {
+            addLog('No trades to settle (data may not be available yet)', 'info');
+        }
+        await refreshStats();
+        await refreshTrades();
+        await loadEquityChart();
+    } catch(e) {
+        addLog('Settlement check failed: ' + e.message, 'error');
+    }
+}
+
+// Backtest
+let backtestProgressTimer = null;
+
+async function pollBacktestProgress() {
+    try {
+        const p = await api('/api/backtest/progress');
+        if (p.status === 'running') {
+            $('backtestBtn').textContent = `${p.city} ${p.date}...`;
+            const info = `Fetching ${p.city} — ${p.date} | ${p.trades} trades found | ${p.errors} errors`;
+            $('backtestBody').innerHTML = `<div style="padding:20px;text-align:center;color:var(--text-dim);"><div class="spinner" style="margin:0 auto 10px;"></div><p>${info}</p></div>`;
+        }
+    } catch(e) {}
+}
+
+async function runBacktest() {
+    const btn = $('backtestBtn');
+    const days = parseInt($('backtestDays').value);
+    btn.disabled = true;
+    btn.textContent = 'Starting...';
+    addLog(`Running ${days}-day backtest (fetching real GFS forecasts — this takes a minute)...`, 'info');
+
+    // Poll progress every 2s
+    backtestProgressTimer = setInterval(pollBacktestProgress, 2000);
+
+    try {
+        const resp = await fetch('/api/backtest', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ days }),
+        });
+        clearInterval(backtestProgressTimer);
+        const r = await resp.json();
+
+        const pnlClass = r.total_pnl >= 0 ? 'green' : 'red';
+        let html = `<div style="padding:16px;">
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;margin-bottom:16px;">
+                <div><span style="color:var(--text-dim);font-size:11px;text-transform:uppercase;">Period</span><br><strong>${r.start_date} → ${r.end_date}</strong></div>
+                <div><span style="color:var(--text-dim);font-size:11px;text-transform:uppercase;">Trades</span><br><strong>${r.total_trades}</strong></div>
+                <div><span style="color:var(--text-dim);font-size:11px;text-transform:uppercase;">Win Rate</span><br><strong>${r.win_rate}%</strong></div>
+                <div><span style="color:var(--text-dim);font-size:11px;text-transform:uppercase;">Total P&L</span><br><strong class="${pnlClass}">${usd(r.total_pnl)}</strong></div>
+                <div><span style="color:var(--text-dim);font-size:11px;text-transform:uppercase;">Avg/Trade</span><br><strong>${usd(r.avg_pnl_per_trade)}</strong></div>
+                <div><span style="color:var(--text-dim);font-size:11px;text-transform:uppercase;">W / L</span><br><strong>${r.wins} / ${r.losses}</strong></div>
+            </div>`;
+
+        if (r.trade_log && r.trade_log.length) {
+            html += '<div style="max-height:300px;overflow-y:auto;"><table><thead><tr><th>Date</th><th>City</th><th>Threshold</th><th>Actual</th><th>Side</th><th>Edge</th><th>Result</th><th>P&L</th><th>Cumulative</th></tr></thead><tbody>';
+            for (const t of r.trade_log) {
+                const icon = t.won ? '✅' : '❌';
+                const pClass = t.pnl >= 0 ? 'pnl-pos' : 'pnl-neg';
+                html += `<tr>
+                    <td>${t.date}</td>
+                    <td>${t.city}</td>
+                    <td>${t.threshold}°F</td>
+                    <td>${t.actual}°F</td>
+                    <td>${t.side.toUpperCase()}</td>
+                    <td>${(t.edge*100).toFixed(1)}%</td>
+                    <td>${icon}</td>
+                    <td class="${pClass}">${usd(t.pnl)}</td>
+                    <td>${usd(t.cumulative_pnl)}</td>
+                </tr>`;
+            }
+            html += '</tbody></table></div>';
+        }
+        html += '</div>';
+        $('backtestBody').innerHTML = html;
+        addLog(`Backtest complete: ${r.total_trades} trades, ${r.win_rate}% win rate, ${usd(r.total_pnl)} P&L`, r.total_pnl >= 0 ? 'success' : 'warn');
+    } catch(e) {
+        clearInterval(backtestProgressTimer);
+        addLog('Backtest failed: ' + e.message, 'error');
+    }
+
+    btn.disabled = false;
+    btn.textContent = 'Run Backtest';
+}
+
+// Trade notes
+async function saveNote(tradeId) {
+    const input = document.getElementById('note-' + tradeId);
+    if (!input) return;
+    const note = input.value.trim();
+    try {
+        await fetch('/api/trade/note', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ trade_id: tradeId, note }),
+        });
+        addLog(`Note saved for trade #${tradeId}`, 'success');
+    } catch(e) {
+        addLog('Failed to save note: ' + e.message, 'error');
+    }
+}
+
+// Init
+(async () => {
+    await refreshStatus();
+    await refreshStats();
+    await refreshTrades();
+    await loadConfig();
+    await loadEquityChart();
+})();
+</script>
+</body>
+</html>
