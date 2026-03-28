@@ -105,8 +105,8 @@ def evaluate_market(market: dict, forecast: dict, bankroll: float) -> dict | Non
         if price > 0.65:
             return None
 
-        # Skip very cheap contracts (< 5¢) — usually noise
-        if price < 0.05:
+        # Skip essentially zero-priced contracts (< 1¢)
+        if price < 0.01:
             return None
 
         size = compute_position_size(model_prob, price, bankroll)
