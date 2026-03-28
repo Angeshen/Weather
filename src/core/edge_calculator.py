@@ -86,9 +86,9 @@ def evaluate_market(market: dict, forecast: dict, bankroll: float) -> dict | Non
     model_prob_below = forecast["prob_below"]
     confidence = forecast["confidence"]
 
-    # Ultra-selective: only trade when ensemble overwhelmingly agrees
-    # 0.85 confidence = 92.5%+ of members on one side
-    if confidence < 0.85:
+    # Trade when ensemble strongly agrees
+    # 0.65 confidence = 82.5%+ of members on one side
+    if confidence < 0.65:
         return None
     market_type = market.get("market_type", "high_temp")
     unit = market.get("unit", "°F")
@@ -100,13 +100,13 @@ def evaluate_market(market: dict, forecast: dict, bankroll: float) -> dict | Non
     signals = []
 
     def _build_signal(side, direction, model_prob, price):
-        # Only buy cheap contracts — max 55¢ for good risk/reward
-        # At 30¢ you risk $30 to win $70. At 55¢ you risk $55 to win $45.
-        if price > 0.55:
+        # Only buy contracts up to 65¢ for reasonable risk/reward
+        # At 30¢ you risk $30 to win $70. At 65¢ you risk $65 to win $35.
+        if price > 0.65:
             return None
 
-        # Skip very cheap contracts (< 8¢) — usually noise
-        if price < 0.08:
+        # Skip very cheap contracts (< 5¢) — usually noise
+        if price < 0.05:
             return None
 
         size = compute_position_size(model_prob, price, bankroll)
