@@ -125,9 +125,38 @@ cd /opt/kalshi-bot && git pull && systemctl restart kalshi-bot
 
 That's it — bot is updated and restarted.
 
-### Updating .env or Key on the Server
+### Changing a Single Setting on the Server
 
-To update `.env` on the server (no nano needed):
+Use `sed` to update one value without touching your keys:
+
+```bash
+# Change a setting (replace SETTING_NAME and new_value)
+sed -i 's/SETTING_NAME=.*/SETTING_NAME=new_value/' /opt/kalshi-bot/.env && systemctl restart kalshi-bot
+```
+
+Common examples:
+```bash
+# Change max trade size to $200
+sed -i 's/MAX_TRADE_SIZE=.*/MAX_TRADE_SIZE=200/' /opt/kalshi-bot/.env && systemctl restart kalshi-bot
+
+# Change edge threshold to 8%
+sed -i 's/MIN_EDGE_THRESHOLD=.*/MIN_EDGE_THRESHOLD=0.08/' /opt/kalshi-bot/.env && systemctl restart kalshi-bot
+
+# Change daily loss limit to $500
+sed -i 's/DAILY_LOSS_LIMIT=.*/DAILY_LOSS_LIMIT=500/' /opt/kalshi-bot/.env && systemctl restart kalshi-bot
+
+# Switch to live trading
+sed -i 's/TRADING_MODE=.*/TRADING_MODE=live/' /opt/kalshi-bot/.env && systemctl restart kalshi-bot
+```
+
+View current settings:
+```bash
+cat /opt/kalshi-bot/.env
+```
+
+### Full .env Reset (only if needed)
+
+If you need to rewrite the whole `.env` (e.g. new API key):
 ```bash
 cat > /opt/kalshi-bot/.env << 'EOF'
 KALSHI_API_KEY_ID=your_key_here
@@ -145,7 +174,8 @@ EOF
 systemctl restart kalshi-bot
 ```
 
-To update the private key:
+### Updating the Private Key
+
 ```bash
 cat > /opt/kalshi-bot/kalshi-key.pem << 'KEYEOF'
 -----BEGIN EC PRIVATE KEY-----
