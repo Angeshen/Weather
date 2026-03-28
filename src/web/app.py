@@ -367,6 +367,37 @@ def api_trade_note():
     return jsonify({"status": "saved"})
 
 
+@app.route("/api/debug/forecast")
+def api_debug_forecast():
+    """Show forecast + filter results for first 5 markets to diagnose why no signals fire."""
+    _, markets, _ = run_scan()
+    bankroll = get_current_bankroll()
+    results = []
+    for market in markets[:5]:
+        try:
+            forecast = get_forecast_for_city(
+                series_ticker=market["series_ticker"],
+                target_date=market["target_date"],
+                threshold_f=market["threshold_f"],
+            )
+            signal = evaluate_market(market, forecast, bankroll)
+            results.append({
+                "ticker": market["ticker"],
+                "yes_ask": market.get("yes_ask"),
+                "no_ask": market.get("no_ask"),
+                "n_members": forecast.get("n_members"),
+                "confidence": round(forecast.get("confidence", 0), 4),
+                "prob_above": round(forecast.get("prob_above", 0), 4),
+                "prob_below": round(forecast.get("prob_below", 0), 4),
+                "mean_val": round(forecast.get("mean_val", 0), 1),
+                "signal": signal is not None,
+                "error": forecast.get("error"),
+            })
+        except Exception as e:
+            results.append({"ticker": market["ticker"], "error": str(e)})
+    return jsonify(results)
+
+
 @app.route("/api/settle", methods=["POST"])
 def api_settle():
     """Manually trigger settlement check."""
