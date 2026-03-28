@@ -21,27 +21,28 @@ _VARIABLE_MAP = {
 
 
 def _extract_ensemble_values(daily: dict, variable: str) -> list[float]:
-    """Extract ensemble member values from the Open-Meteo daily response."""
+    """Extract ensemble member values from the Open-Meteo daily response.
+
+    Open-Meteo returns one key per member: e.g. temperature_2m_max_member01,
+    temperature_2m_max_member02, ... plus a non-suffixed ensemble-mean key.
+    We want only the per-member keys (each is a list with one value per date).
+    """
     values = []
 
-    primary = daily.get(variable, [])
-    if isinstance(primary, list):
-        if len(primary) > 0 and isinstance(primary[0], list):
-            for member_vals in primary:
-                if member_vals and len(member_vals) > 0 and member_vals[0] is not None:
-                    values.append(float(member_vals[0]))
-        else:
-            for val in primary:
+    # Collect member-keyed fields (temperature_2m_max_member01, etc.)
+    for key, val_list in daily.items():
+        if key.startswith(f"{variable}_member") and isinstance(val_list, list):
+            for val in val_list:
                 if val is not None:
                     values.append(float(val))
 
-    # Fallback: member-keyed fields (e.g. temperature_2m_max_member01)
+    # Fallback: if no member keys found, use the primary ensemble-mean field
     if not values:
-        for key, val_list in daily.items():
-            if key.startswith(variable) and isinstance(val_list, list):
-                for val in val_list:
-                    if val is not None:
-                        values.append(float(val))
+        primary = daily.get(variable, [])
+        if isinstance(primary, list):
+            for val in primary:
+                if val is not None:
+                    values.append(float(val))
 
     return values
 
