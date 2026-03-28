@@ -19,8 +19,8 @@ Automated weather prediction market bot for Kalshi. Uses **multi-model ensemble 
 1. **Scans** Kalshi for open weather markets across all 3 types and 5 cities
 2. **Fetches** multi-model ensemble forecasts (GFS + ECMWF + ICON) from Open-Meteo
 3. **Calculates** probability by counting how many ensemble members exceed the threshold
-4. **Filters** for ultra-high confidence (85%+) with minimum 40 ensemble members
-5. **Compares** model probability vs market price to find edge (min 10%)
+4. **Filters** for strong confidence (65%+) with minimum 40 ensemble members
+5. **Compares** model probability vs market price to find edge (min 5%)
 6. **Sizes** positions using fractional Kelly criterion (20%) with $150 max per trade
 7. **Executes** trades (paper or live) with built-in risk management
 8. **Sends** Telegram notifications for trades, settlements, and daily summaries
@@ -29,10 +29,10 @@ Automated weather prediction market bot for Kalshi. Uses **multi-model ensemble 
 
 | Parameter | Value | Description |
 |-----------|-------|-------------|
-| Confidence Threshold | 85% | Only trade when 92.5%+ of ensemble members agree |
-| Min Edge | 10% | Model must disagree with market by 10%+ |
-| Max Contract Price | 55¢ | Only buy cheap contracts for good risk/reward |
-| Min Contract Price | 8¢ | Avoid near-zero liquidity traps |
+| Confidence Threshold | 65% | Only trade when 82.5%+ of ensemble members agree |
+| Min Edge | 5% | Model must disagree with market by 5%+ |
+| Max Contract Price | 65¢ | Only buy contracts with reasonable risk/reward |
+| Min Contract Price | 5¢ | Avoid near-zero liquidity traps |
 | Min Ensemble Members | 40 | Need enough data for reliable probability |
 | Kelly Fraction | 20% | Position sizing (conservative fractional Kelly) |
 | Max Trade Size | $150 | Per-trade cap |
@@ -125,6 +125,30 @@ cd /opt/kalshi-bot && git pull && systemctl restart kalshi-bot
 
 That's it — bot is updated and restarted.
 
+### Verifying the Server Has Your Latest Code
+
+After pushing, confirm the server is running the correct version:
+
+```bash
+# Check the last 3 commits on the server — should match what you pushed
+cd /opt/kalshi-bot && git log --oneline -3
+
+# Spot-check a specific value in the code (e.g. confidence threshold)
+grep "confidence <" /opt/kalshi-bot/src/core/edge_calculator.py
+# Expected: if confidence < 0.65:
+
+# Check the current .env values on the server
+cat /opt/kalshi-bot/.env
+
+# Confirm the bot restarted cleanly after the pull
+systemctl status kalshi-bot
+```
+
+If `git log` shows an old commit, the pull didn't run — re-run:
+```bash
+cd /opt/kalshi-bot && git pull && systemctl restart kalshi-bot
+```
+
 ### Changing a Single Setting on the Server
 
 Use `sed` to update one value without touching your keys:
@@ -139,8 +163,8 @@ Common examples:
 # Change max trade size to $200
 sed -i 's/MAX_TRADE_SIZE=.*/MAX_TRADE_SIZE=200/' /opt/kalshi-bot/.env && systemctl restart kalshi-bot
 
-# Change edge threshold to 8%
-sed -i 's/MIN_EDGE_THRESHOLD=.*/MIN_EDGE_THRESHOLD=0.08/' /opt/kalshi-bot/.env && systemctl restart kalshi-bot
+# Change edge threshold to 5%
+sed -i 's/MIN_EDGE_THRESHOLD=.*/MIN_EDGE_THRESHOLD=0.05/' /opt/kalshi-bot/.env && systemctl restart kalshi-bot
 
 # Change daily loss limit to $500
 sed -i 's/DAILY_LOSS_LIMIT=.*/DAILY_LOSS_LIMIT=500/' /opt/kalshi-bot/.env && systemctl restart kalshi-bot
@@ -164,7 +188,7 @@ KALSHI_PRIVATE_KEY_PATH=/opt/kalshi-bot/kalshi-key.pem
 TRADING_MODE=paper
 INITIAL_BANKROLL=5000
 SCAN_INTERVAL_SECONDS=120
-MIN_EDGE_THRESHOLD=0.10
+MIN_EDGE_THRESHOLD=0.05
 MAX_TRADE_SIZE=150
 DAILY_LOSS_LIMIT=400
 KELLY_FRACTION=0.20
@@ -206,7 +230,7 @@ KALSHI_PRIVATE_KEY_PATH=/opt/kalshi-bot/kalshi-key.pem
 TRADING_MODE=paper
 INITIAL_BANKROLL=5000
 SCAN_INTERVAL_SECONDS=120
-MIN_EDGE_THRESHOLD=0.10
+MIN_EDGE_THRESHOLD=0.05
 MAX_TRADE_SIZE=150
 DAILY_LOSS_LIMIT=400
 KELLY_FRACTION=0.20
@@ -225,7 +249,7 @@ systemctl restart kalshi-bot
 | `TRADING_MODE` | `paper` | `paper` (simulated) or `live` (real money) |
 | `INITIAL_BANKROLL` | `5000` | Starting bankroll in dollars |
 | `SCAN_INTERVAL_SECONDS` | `120` | How often the bot scans (in seconds) |
-| `MIN_EDGE_THRESHOLD` | `0.10` | Minimum edge to take a trade (10% = 0.10) |
+| `MIN_EDGE_THRESHOLD` | `0.05` | Minimum edge to take a trade (5% = 0.05) |
 | `MAX_TRADE_SIZE` | `150` | Max dollars per trade |
 | `DAILY_LOSS_LIMIT` | `400` | Bot stops trading after losing this much in a day |
 | `KELLY_FRACTION` | `0.20` | Position sizing aggressiveness (0.20 = 20% Kelly) |

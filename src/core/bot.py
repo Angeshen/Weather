@@ -243,7 +243,11 @@ def run_bot():
 
     try:
         while True:
-            run_scan_cycle(client)
+            try:
+                run_scan_cycle(client)
+            except Exception as e:
+                console.print(f"[red]Unhandled error in scan cycle: {e}[/]")
+                console.print("[yellow]Continuing in next scan...[/]")
             console.print(f"\n[dim]Next scan in {settings.scan_interval_seconds}s...[/]\n")
             time.sleep(settings.scan_interval_seconds)
     except KeyboardInterrupt:
