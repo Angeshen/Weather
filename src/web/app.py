@@ -78,7 +78,7 @@ def run_scan():
             forecast = get_forecast_for_city(
                 series_ticker=market["series_ticker"],
                 target_date=market["target_date"],
-                threshold_f=market["threshold_f"],
+                threshold=market["threshold_f"],
             )
             if forecast.get("error"):
                 continue
@@ -130,7 +130,7 @@ def bot_loop():
                     forecast = get_forecast_for_city(
                         series_ticker=market["series_ticker"],
                         target_date=market["target_date"],
-                        threshold_f=market["threshold_f"],
+                        threshold=market["threshold_f"],
                     )
                     if forecast.get("error"):
                         continue
@@ -378,7 +378,7 @@ def api_debug_forecast():
             forecast = get_forecast_for_city(
                 series_ticker=market["series_ticker"],
                 target_date=market["target_date"],
-                threshold_f=market["threshold_f"],
+                threshold=market["threshold_f"],
             )
             signal = evaluate_market(market, forecast, bankroll)
             results.append({

@@ -182,7 +182,7 @@ def run_scan_cycle(client: KalshiClient = None):
             forecast = get_forecast_for_city(
                 series_ticker=market["series_ticker"],
                 target_date=market["target_date"],
-                threshold_f=market["threshold_f"],
+                threshold=market["threshold_f"],
             )
 
             if forecast.get("error"):
