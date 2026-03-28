@@ -252,6 +252,23 @@ def api_bot_stop():
     return jsonify({"status": "stopped"})
 
 
+@app.route("/api/balance")
+def api_balance():
+    """Return Kalshi account balance (live mode only)."""
+    if settings.trading_mode != "live":
+        return jsonify({"balance": None, "mode": "paper"})
+    try:
+        client = KalshiClient()
+        result = client.get_balance()
+        client.close()
+        # Balance is returned as cents or dollars depending on API version
+        raw = result.get("balance", result.get("portfolio_value", 0))
+        balance = float(raw) / 100.0 if isinstance(raw, int) and raw > 1000 else float(raw)
+        return jsonify({"balance": round(balance, 2), "mode": "live"})
+    except Exception as e:
+        return jsonify({"balance": None, "mode": "live", "error": str(e)})
+
+
 @app.route("/api/config")
 def api_config():
     return jsonify({

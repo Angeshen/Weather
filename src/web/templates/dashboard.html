@@ -148,6 +148,7 @@
     <div class="container">
         <div class="stats-grid">
             <div class="stat-card"><div class="label">Bankroll</div><div class="value cyan" id="statBankroll">$5,000</div></div>
+            <div class="stat-card"><div class="label">Kalshi Balance</div><div class="value cyan" id="statKalshiBalance">—</div></div>
             <div class="stat-card"><div class="label">Total P&amp;L</div><div class="value" id="statPnl">$0.00</div></div>
             <div class="stat-card"><div class="label">Open Trades</div><div class="value" id="statOpen">0</div></div>
             <div class="stat-card"><div class="label">Win Rate</div><div class="value" id="statWinRate">0%</div></div>
@@ -286,6 +287,11 @@ async function refreshStats() {
         $('statOpen').textContent = stats.open_trades;
         $('statWinRate').textContent = stats.win_rate.toFixed(1) + '%';
         $('statTotal').textContent = stats.total_trades;
+    } catch(e) {}
+    try {
+        const bal = await api('/api/balance');
+        $('statKalshiBalance').textContent = bal.balance !== null ? usd(bal.balance) : (bal.mode === 'paper' ? 'Paper' : '—');
+        $('statKalshiBalance').className = 'value ' + (bal.balance !== null ? 'cyan' : 'dim');
     } catch(e) {}
 }
 
