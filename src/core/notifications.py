@@ -92,8 +92,16 @@ def notify_daily_summary(stats: dict):
     _send_message(text)
 
 
+_last_risk_alert: dict = {}
+
 def notify_risk_alert(message: str):
-    """Send alert when risk limits are hit."""
+    """Send alert when risk limits are hit. Cooldown of 1 hour per unique message."""
+    import time
+    now = time.time()
+    last_sent = _last_risk_alert.get(message, 0)
+    if now - last_sent < 3600:
+        return  # Don't repeat the same alert within 1 hour
+    _last_risk_alert[message] = now
     text = f"⚠️ <b>Risk Alert</b>\n\n{message}"
     _send_message(text)
 
