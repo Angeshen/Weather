@@ -15,6 +15,26 @@ from src.core.notifications import notify_daily_summary
 
 
 OPEN_METEO_HISTORICAL_URL = "https://archive-api.open-meteo.com/v1/archive"
+KALSHI_PUBLIC_URL = "https://api.elections.kalshi.com/trade-api/v2"
+
+
+def fetch_kalshi_resolution(ticker: str) -> float | None:
+    """
+    Fetch the official Kalshi expiration_value for a settled market.
+    This is the exact NWS value Kalshi used to resolve the contract.
+    Returns the value as a float, or None if not yet resolved.
+    """
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            resp = client.get(f"{KALSHI_PUBLIC_URL}/markets/{ticker}")
+            resp.raise_for_status()
+            market = resp.json().get("market", {})
+            expiration_value = market.get("expiration_value", "")
+            if expiration_value:
+                return float(expiration_value)
+    except Exception:
+        pass
+    return None
 
 
 def fetch_actual_weather(lat: float, lon: float, date: str, market_type: str) -> float | None:
@@ -105,11 +125,15 @@ def settle_open_trades() -> dict:
         if not city_info:
             continue
 
-        # Fetch actual observed value
-        actual = fetch_actual_weather(
-            city_info["lat"], city_info["lon"],
-            trade["target_date"], market_type
-        )
+        # Prefer official Kalshi resolution value (exact NWS number used to settle)
+        actual = fetch_kalshi_resolution(ticker)
+
+        # Fall back to Open-Meteo historical archive if Kalshi hasn't resolved yet
+        if actual is None:
+            actual = fetch_actual_weather(
+                city_info["lat"], city_info["lon"],
+                trade["target_date"], market_type
+            )
 
         if actual is None:
             continue  # Data not yet available
