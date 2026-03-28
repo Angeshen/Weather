@@ -79,12 +79,23 @@ def parse_weather_ticker(ticker: str) -> dict | None:
 
 def _enrich_market(market: dict, parsed: dict) -> dict:
     """Add price/volume data from a raw Kalshi market to a parsed ticker dict."""
-    yes_price = market.get("yes_bid", 0) / 100.0 if market.get("yes_bid") else None
-    no_price = market.get("no_bid", 0) / 100.0 if market.get("no_bid") else None
-    yes_ask = market.get("yes_ask", 0) / 100.0 if market.get("yes_ask") else None
-    no_ask = market.get("no_ask", 0) / 100.0 if market.get("no_ask") else None
-    last_price = market.get("last_price", 0) / 100.0 if market.get("last_price") else None
-    volume = market.get("volume", 0)
+    def _parse_price(val):
+        """Parse a price value that may be a dollar string ('0.0700'), cents int, or None."""
+        if val is None:
+            return None
+        try:
+            f = float(val)
+            # If value looks like it's already in [0,1] range it's dollars, else cents
+            return f if f <= 1.0 else f / 100.0
+        except (ValueError, TypeError):
+            return None
+
+    yes_price = _parse_price(market.get("yes_bid_dollars") or market.get("yes_bid"))
+    no_price = _parse_price(market.get("no_bid_dollars") or market.get("no_bid"))
+    yes_ask = _parse_price(market.get("yes_ask_dollars") or market.get("yes_ask"))
+    no_ask = _parse_price(market.get("no_ask_dollars") or market.get("no_ask"))
+    last_price = _parse_price(market.get("last_price_dollars") or market.get("last_price"))
+    volume = market.get("volume_fp") or market.get("volume", 0)
 
     parsed.update({
         "yes_bid": yes_price,
