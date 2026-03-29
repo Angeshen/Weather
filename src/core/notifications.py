@@ -189,17 +189,21 @@ def notify_blocked_signal(signal: dict, reason: str):
 
 
 _morning_ping_sent_date: str = ""
+MORNING_PING_HOUR = 8   # 8am local server time
 
 def notify_morning_ping(markets_count: int, open_trades: int, bankroll: float):
-    """Send a morning liveness ping on the first scan of each day."""
+    """Send a morning liveness ping at 8am local time once per day."""
     global _morning_ping_sent_date
-    from datetime import date
+    from datetime import datetime, date
+    now = datetime.now()
     today = date.today().isoformat()
     if _morning_ping_sent_date == today:
         return  # Already sent today
+    if now.hour != MORNING_PING_HOUR:
+        return  # Not 8am yet
     _morning_ping_sent_date = today
     text = (
-        f"☀️ <b>Bot Active</b> — Good morning!\n\n"
+        f"☀️ <b>Good Morning!</b>\n\n"
         f"💰 Bankroll: <b>${bankroll:,.2f}</b>\n"
         f"📡 Watching <b>{markets_count}</b> markets\n"
         f"📂 Open positions: <b>{open_trades}</b>"
