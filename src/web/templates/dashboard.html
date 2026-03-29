@@ -354,8 +354,14 @@ async function refreshTrades() {
             const time = t.timestamp ? t.timestamp.substring(11, 16) : '?';
             const unreal = unrealizedMap[t.id];
             const unrealStr = unreal != null ? `<span class="${unreal >= 0 ? 'pnl-pos' : 'pnl-neg'}">${unreal >= 0 ? '+' : ''}${usd(unreal)}</span>` : '—';
-            const winProfit = (t.status === 'open' && t.contracts && t.position_size_usd)
-                ? `<span class="pnl-pos">+${usd(t.contracts * 1.0 - t.position_size_usd)}</span>`
+            // Win Profit = what you make if contract resolves in your favor at expiry
+            // Colored red if position is currently moving against you (unrealized negative)
+            const winProfitVal = (t.status === 'open' && t.contracts && t.position_size_usd)
+                ? t.contracts * 1.0 - t.position_size_usd
+                : null;
+            const winProfitColor = (unreal != null && unreal < 0) ? 'pnl-neg' : 'pnl-pos';
+            const winProfit = winProfitVal != null
+                ? `<span class="${winProfitColor}">+${usd(winProfitVal)}</span>`
                 : '—';
             html += `<tr>
                 <td>${t.id}</td>
