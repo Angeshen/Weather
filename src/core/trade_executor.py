@@ -129,6 +129,16 @@ def get_open_trade_count() -> int:
     return row[0] if row else 0
 
 
+def is_ticker_already_open(ticker: str) -> bool:
+    """Return True if there's already an open trade for this exact ticker."""
+    conn = get_db()
+    row = conn.execute(
+        "SELECT COUNT(*) FROM trades WHERE status = 'open' AND ticker = ?", (ticker,)
+    ).fetchone()
+    conn.close()
+    return (row[0] if row else 0) > 0
+
+
 def check_risk_limits() -> tuple[bool, str]:
     """Check if we can place more trades based on risk limits."""
     daily_pnl = get_daily_loss_today()
@@ -247,6 +257,9 @@ def execute_trade(signal: dict, client: KalshiClient = None) -> dict:
     if not can_trade:
         notify_risk_alert(reason)
         return {"status": "blocked", "reason": reason}
+
+    if is_ticker_already_open(signal["ticker"]):
+        return {"status": "blocked", "reason": f"Already have open trade on {signal['ticker']}"}
 
     if settings.trading_mode == "live" and client:
         return execute_live_trade(signal, client)
