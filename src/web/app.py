@@ -87,6 +87,7 @@ def run_scan():
     bankroll = get_current_bankroll()
     signals = []
 
+    fetched_at = datetime.now(timezone.utc).isoformat()
     for market in markets:
         try:
             forecast = get_forecast_for_city(
@@ -99,6 +100,7 @@ def run_scan():
 
             signal = evaluate_market(market, forecast, bankroll)
             if signal:
+                signal["forecast_fetched_at"] = fetched_at
                 signals.append(signal)
         except Exception:
             continue
@@ -148,6 +150,7 @@ def bot_loop():
 
             bankroll = get_current_bankroll()
             signals = []
+            scan_fetched_at = datetime.now(timezone.utc).isoformat()
 
             for market in markets:
                 try:
@@ -160,6 +163,7 @@ def bot_loop():
                         continue
                     signal = evaluate_market(market, forecast, bankroll)
                     if signal:
+                        signal["forecast_fetched_at"] = scan_fetched_at
                         signals.append(signal)
                 except Exception:
                     continue
@@ -645,6 +649,21 @@ def _daily_summary_loop():
             last_sent_date = today
         _time.sleep(30)
 
+
+# Settlement background thread — checks every 15 min regardless of bot state
+def _settlement_loop():
+    import time as _time
+    while True:
+        _time.sleep(900)  # 15 minutes
+        try:
+            results = settle_open_trades()
+            if results.get("settled", 0) > 0:
+                notify_settlement(results)
+        except Exception:
+            pass
+
+_settlement_thread = threading.Thread(target=_settlement_loop, daemon=True)
+_settlement_thread.start()
 
 # Start daily summary thread if Telegram is configured
 if settings.telegram_bot_token and settings.telegram_chat_id:

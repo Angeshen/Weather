@@ -209,6 +209,10 @@ def evaluate_market(market: dict, forecast: dict, bankroll: float) -> dict | Non
             if sig:
                 signals.append(sig)
 
+    # Only take the single best signal per market — never trade both sides
+    if len(signals) > 1:
+        signals = [max(signals, key=lambda s: s["edge"])]
+
     if not signals:
         return None
 

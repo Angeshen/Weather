@@ -589,7 +589,7 @@ function renderSignals(signals) {
         $('signalsBody').innerHTML = '<div class="empty-state"><div class="icon">&#9989;</div><p>No actionable signals — market prices align with forecasts</p></div>';
         return;
     }
-    let html = '<table><thead><tr><th>City</th><th>Type</th><th>Date</th><th>Threshold</th><th>Direction</th><th>Model</th><th>Market</th><th>Edge</th><th>Confidence</th><th>Trend</th><th>Size</th><th>Forecast</th></tr></thead><tbody>';
+    let html = '<table><thead><tr><th>City</th><th>Type</th><th>Date</th><th>Threshold</th><th>Direction</th><th>Model</th><th>Market</th><th>Edge</th><th>Confidence</th><th>Trend</th><th>Size</th><th>Forecast</th><th>Data Age</th></tr></thead><tbody>';
     for (const s of signals) {
         const edgeClass = s.edge >= 0.15 ? 'edge-high' : 'edge-medium';
         const dirClass = s.direction.includes('ABOVE') || s.direction.includes('YES') ? 'dir-above' : 'dir-below';
@@ -598,6 +598,19 @@ function renderSignals(signals) {
         const trendMap = {'rising': '↑ Rising', 'falling': '↓ Falling', 'stable': '→ Stable', 'new': '✦ New'};
         const trendStyle = {'rising': 'color:var(--green)', 'falling': 'color:var(--red)', 'stable': 'color:var(--text-dim)', 'new': 'color:var(--cyan)'};
         const trend = s.confidence_trend || 'new';
+        // Forecast age
+        let ageStr = '—', ageColor = 'var(--text-dim)';
+        if (s.forecast_fetched_at) {
+            const ageMs = Date.now() - new Date(s.forecast_fetched_at).getTime();
+            const ageMins = Math.floor(ageMs / 60000);
+            if (ageMins < 60) {
+                ageStr = ageMins + 'm ago';
+                ageColor = ageMins > 30 ? 'var(--red)' : ageMins > 15 ? '#f0a500' : 'var(--green)';
+            } else {
+                ageStr = Math.floor(ageMins / 60) + 'h ago';
+                ageColor = 'var(--red)';
+            }
+        }
         html += `<tr>
             <td><strong>${s.city}</strong></td>
             <td>${typeLabel}</td>
@@ -611,6 +624,7 @@ function renderSignals(signals) {
             <td style="${trendStyle[trend]||''}">${trendMap[trend]||trend}</td>
             <td>${usd(s.position_size_usd)}</td>
             <td>${s.forecast_mean}${unit} (${s.forecast_min}-${s.forecast_max})</td>
+            <td style="font-size:11px;color:${ageColor}" title="${s.forecast_fetched_at||'unknown'}">${ageStr}</td>
         </tr>`;
     }
     html += '</tbody></table>';
@@ -1103,6 +1117,15 @@ setInterval(async () => {
     await refreshTrades();
     await refreshCityStats();
 }, 30000);
+
+// Independent 60s refresh for open positions live P&L
+// Runs separately so positions tab stays current even when bot isn't scanning
+setInterval(async () => {
+    try {
+        const openTrades = await api('/api/open-trades').catch(() => []);
+        await refreshOpenPositions(openTrades);
+    } catch(e) {}
+}, 60000);
 </script>
 </body>
 </html>
