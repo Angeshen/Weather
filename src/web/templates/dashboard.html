@@ -119,6 +119,13 @@
         }
 
         .chart-container { position: relative; height: 250px; padding: 16px; }
+        .scan-mode-badge { padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 700; letter-spacing: 0.5px; }
+        .scan-mode-fast { background: rgba(0,214,143,0.15); color: var(--green); }
+        .scan-mode-normal { background: rgba(139,143,163,0.12); color: var(--text-dim); }
+        .liq-badge { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 700; }
+        .liq-ok { background: rgba(0,214,143,0.15); color: var(--green); }
+        .liq-warn { background: rgba(255,107,107,0.15); color: var(--red); }
+        .city-chart-container { padding: 16px; height: 200px; position: relative; }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
 </head>
@@ -130,6 +137,8 @@
         </h1>
         <div class="header-controls">
             <span class="last-scan" id="lastScan">No scans yet</span>
+            <span id="scanModeBadge" class="scan-mode-badge scan-mode-normal" title="GFS model run window">Normal</span>
+            <span class="last-scan" id="gfsCountdown" title="Time until next GFS model run"></span>
             <div class="mode-toggle">
                 <span id="labelPaper" class="label-paper">PAPER</span>
                 <label class="toggle-switch" title="Switch between Paper and Live mode">
@@ -327,6 +336,20 @@ async function refreshStatus() {
             const d = new Date(status.last_scan);
             $('lastScan').textContent = 'Last scan: ' + d.toLocaleTimeString();
         }
+        // Scan mode indicator
+        const badge = $('scanModeBadge');
+        const countdown = $('gfsCountdown');
+        if (status.in_model_window) {
+            badge.textContent = '⚡ Fast Mode';
+            badge.className = 'scan-mode-badge scan-mode-fast';
+            countdown.textContent = '';
+        } else {
+            badge.textContent = 'Normal';
+            badge.className = 'scan-mode-badge scan-mode-normal';
+            const mins = status.next_model_run_mins || 0;
+            const h = Math.floor(mins / 60), m = mins % 60;
+            countdown.textContent = `Next GFS: ${h}h ${m}m`;
+        }
     } catch(e) {}
 }
 
@@ -347,11 +370,21 @@ async function refreshTrades() {
             $('tradesBody').innerHTML = '<div class="empty-state"><div class="icon">&#128202;</div><p>No trades yet</p></div>';
             return;
         }
-        let html = '<table><thead><tr><th>#</th><th>Time</th><th>Ticker</th><th>Side</th><th>Edge</th><th>Size</th><th>Status</th><th>P&L</th><th>Unrealized</th><th>Win Profit</th></tr></thead><tbody>';
+        let html = '<table><thead><tr><th>#</th><th>Time</th><th>Ticker</th><th>Side</th><th>Edge</th><th>Size</th><th>Status</th><th>Duration</th><th>P&L</th><th>Unrealized</th><th>Win Profit</th></tr></thead><tbody>';
         for (const t of trades) {
             const pnlClass = (t.pnl_usd || 0) > 0 ? 'pnl-pos' : (t.pnl_usd || 0) < 0 ? 'pnl-neg' : '';
             const pnl = t.pnl_usd != null && t.status === 'settled' ? usd(t.pnl_usd) : '—';
             const time = t.timestamp ? t.timestamp.substring(11, 16) : '?';
+            // Trade duration
+            let durationStr = '—';
+            if (t.timestamp) {
+                const opened = new Date(t.timestamp);
+                const closed = t.settled_at ? new Date(t.settled_at) : new Date();
+                const diffMs = closed - opened;
+                const diffH = Math.floor(diffMs / 3600000);
+                const diffD = Math.floor(diffH / 24);
+                durationStr = diffD > 0 ? `${diffD}d ${diffH % 24}h` : `${diffH}h`;
+            }
             const unreal = unrealizedMap[t.id];
             const unrealStr = unreal != null ? `<span class="${unreal >= 0 ? 'pnl-pos' : 'pnl-neg'}">${unreal >= 0 ? '+' : ''}${usd(unreal)}</span>` : '—';
             // Win Profit = what you make if contract resolves in your favor at expiry
@@ -371,6 +404,7 @@ async function refreshTrades() {
                 <td>${t.edge ? pct(t.edge) : '?'}</td>
                 <td>${t.position_size_usd ? usd(t.position_size_usd) : '?'}</td>
                 <td>${t.status}</td>
+                <td style="color:var(--text-dim);font-size:11px">${durationStr}</td>
                 <td class="${pnlClass}">${pnl}</td>
                 <td>${t.status === 'open' ? unrealStr : '—'}</td>
                 <td>${winProfit}</td>
@@ -381,6 +415,7 @@ async function refreshTrades() {
     } catch(e) {}
 }
 
+let _cityChart = null;
 async function refreshCityStats() {
     try {
         const stats = await api('/api/city-stats');
@@ -400,7 +435,37 @@ async function refreshCityStats() {
             </tr>`;
         }
         html += '</tbody></table>';
+        // P&L bar chart
+        html += '<div class="city-chart-container"><canvas id="cityPnlChart"></canvas></div>';
         $('cityStatsBody').innerHTML = html;
+        // Render chart after DOM update
+        setTimeout(() => {
+            const ctx = document.getElementById('cityPnlChart');
+            if (!ctx) return;
+            if (_cityChart) _cityChart.destroy();
+            _cityChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: stats.map(c => c.city),
+                    datasets: [{
+                        label: 'P&L ($)',
+                        data: stats.map(c => c.total_pnl),
+                        backgroundColor: stats.map(c => c.total_pnl >= 0 ? 'rgba(0,214,143,0.7)' : 'rgba(255,107,107,0.7)'),
+                        borderColor: stats.map(c => c.total_pnl >= 0 ? '#00d68f' : '#ff6b6b'),
+                        borderWidth: 1,
+                        borderRadius: 4,
+                    }]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { ticks: { color: '#8b8fa3', font: { size: 11 } }, grid: { color: '#2d3140' } },
+                        y: { ticks: { color: '#8b8fa3', font: { size: 11 }, callback: v => '$' + v }, grid: { color: '#2d3140' } }
+                    }
+                }
+            });
+        }, 50);
     } catch(e) {}
 }
 
@@ -446,19 +511,31 @@ function renderMarkets(markets) {
         $('marketsBody').innerHTML = '<div class="empty-state"><div class="icon">&#127782;&#65039;</div><p>No open markets found</p></div>';
         return;
     }
-    let html = '<table><thead><tr><th>Ticker</th><th>City</th><th>Type</th><th>Date</th><th>Threshold</th><th>Yes Bid</th><th>Yes Ask</th><th>Volume</th></tr></thead><tbody>';
+    let html = '<table><thead><tr><th>Ticker</th><th>City</th><th>Type</th><th>Date</th><th>Threshold</th><th>Yes Bid</th><th>Yes Ask</th><th>Spread</th><th>Volume</th><th>Liquidity</th></tr></thead><tbody>';
     for (const m of markets) {
         const unit = m.unit || '\u00b0F';
         const typeLabel = {'high_temp':'High','low_temp':'Low','precipitation':'Rain'}[m.market_type] || '?';
+        // Liquidity check matching bot logic: volume >= 50, spread <= 15¢
+        const vol = m.volume || 0;
+        const yesBid = m.yes_bid || 0;
+        const yesAsk = m.yes_ask || 0;
+        const spreadCents = yesAsk && yesBid ? Math.round((yesAsk - yesBid) * 100) : null;
+        const isLiquid = vol >= 50 && (spreadCents === null || spreadCents <= 15);
+        const liqBadge = isLiquid
+            ? '<span class="liq-badge liq-ok">✓ OK</span>'
+            : `<span class="liq-badge liq-warn" title="Vol:${vol} Spread:${spreadCents}¢">⚠ Thin</span>`;
+        const spreadStr = spreadCents !== null ? spreadCents + '¢' : '—';
         html += `<tr>
             <td><code>${m.ticker}</code></td>
             <td>${m.city}</td>
             <td>${typeLabel}</td>
             <td>${m.target_date}</td>
             <td>${m.threshold_f}${unit}</td>
-            <td>${m.yes_bid != null ? pct(m.yes_bid) : '\u2014'}</td>
-            <td>${m.yes_ask != null ? pct(m.yes_ask) : '\u2014'}</td>
-            <td>${m.volume || 0}</td>
+            <td>${yesBid ? pct(yesBid) : '\u2014'}</td>
+            <td>${yesAsk ? pct(yesAsk) : '\u2014'}</td>
+            <td style="font-size:11px;color:${spreadCents > 15 ? 'var(--red)' : 'var(--text-dim)'}">${spreadStr}</td>
+            <td>${vol}</td>
+            <td>${liqBadge}</td>
         </tr>`;
     }
     html += '</tbody></table>';

@@ -263,8 +263,17 @@ def bot_loop():
         except Exception:
             pass
 
-        # Sleep in small increments so we can stop quickly
-        for _ in range(settings.scan_interval_seconds):
+        # GFS model runs complete ~00Z and ~12Z UTC (midnight + noon UTC).
+        # Scan more aggressively for 90 min after each run — freshest ensemble data.
+        now_utc = datetime.now(timezone.utc)
+        hour_utc = now_utc.hour
+        minute_utc = now_utc.minute
+        minutes_since_00z = hour_utc * 60 + minute_utc
+        minutes_since_12z = abs(hour_utc - 12) * 60 + minute_utc
+        in_model_window = minutes_since_00z <= 90 or minutes_since_12z <= 90
+        sleep_secs = max(60, settings.scan_interval_seconds // 2) if in_model_window else settings.scan_interval_seconds
+
+        for _ in range(sleep_secs):
             if not bot_state["running"]:
                 break
             time.sleep(1)
@@ -282,12 +291,24 @@ def index():
 
 @app.route("/api/status")
 def api_status():
+    now_utc = datetime.now(timezone.utc)
+    h, m = now_utc.hour, now_utc.minute
+    mins_total = h * 60 + m
+    mins_since_00z = mins_total
+    mins_since_12z = abs(h - 12) * 60 + m
+    in_model_window = mins_since_00z <= 90 or mins_since_12z <= 90
+    # Minutes until next model run window (00Z or 12Z)
+    next_00z = (24 * 60) - mins_total
+    next_12z = (12 * 60) - mins_total if mins_total < 12 * 60 else (24 * 60) - mins_total + (12 * 60)
+    next_window_mins = min(next_00z, next_12z) if not in_model_window else 0
     return jsonify({
         "running": bot_state["running"],
         "mode": settings.trading_mode,
         "last_scan": bot_state["last_scan"],
         "scan_count": bot_state["scan_count"],
         "scan_interval": settings.scan_interval_seconds,
+        "in_model_window": in_model_window,
+        "next_model_run_mins": int(next_window_mins),
     })
 
 

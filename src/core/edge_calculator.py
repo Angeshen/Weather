@@ -81,6 +81,38 @@ def _direction_labels(market_type: str) -> tuple[str, str]:
         return ("ABOVE", "BELOW")
 
 
+# Liquidity thresholds — skip illiquid markets that are hard to fill at fair price
+_MIN_VOLUME = 50          # Minimum total contracts traded (weeds out ghost markets)
+_MAX_SPREAD_CENTS = 15    # Max bid-ask spread in cents (15¢ = very wide, skip)
+
+
+def _is_liquid(market: dict) -> bool:
+    """
+    Check if a market has enough liquidity to trade safely.
+    Wide spreads mean we'd pay too much slippage; low volume means poor fills.
+    """
+    volume = market.get("volume", 0) or 0
+    yes_bid = market.get("yes_bid") or 0
+    yes_ask = market.get("yes_ask") or 0
+    no_bid = market.get("no_bid") or 0
+    no_ask = market.get("no_ask") or 0
+
+    if volume < _MIN_VOLUME:
+        return False
+
+    # Check spread on whichever side has quotes
+    if yes_bid and yes_ask:
+        spread = int(yes_ask * 100) - int(yes_bid * 100)
+        if spread > _MAX_SPREAD_CENTS:
+            return False
+    if no_bid and no_ask:
+        spread = int(no_ask * 100) - int(no_bid * 100)
+        if spread > _MAX_SPREAD_CENTS:
+            return False
+
+    return True
+
+
 def evaluate_market(market: dict, forecast: dict, bankroll: float) -> dict | None:
     """
     Evaluate a single market against its forecast to produce a trade signal.
@@ -99,6 +131,10 @@ def evaluate_market(market: dict, forecast: dict, bankroll: float) -> dict | Non
         days_to_expiry = (target - _date.today()).days
     except (ValueError, TypeError):
         days_to_expiry = 7
+    # Skip illiquid markets — wide spreads eat our edge, thin volume means bad fills
+    if not _is_liquid(market):
+        return None
+
     n_members = forecast.get("n_members", 0)
     if n_members < 40:
         return None  # Need substantial ensemble for reliable probability
