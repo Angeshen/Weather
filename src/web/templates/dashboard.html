@@ -173,13 +173,14 @@
             <div class="stat-card"><div class="label">Markets Found</div><div class="value" id="statMarkets">0</div></div>
             <div class="stat-card"><div class="label">Active Signals</div><div class="value green" id="statSignals">0</div></div>
             <div class="stat-card"><div class="label">Scans</div><div class="value" id="statScans">0</div></div>
+            <div class="stat-card"><div class="label">Today's P&amp;L</div><div class="value" id="statDailyPnl">$0.00</div></div>
         </div>
     </div>
 
     <!-- Tab bar -->
     <div class="tab-bar">
         <button class="tab-btn active" onclick="switchTab('overview', this)">📊 Overview</button>
-        <button class="tab-btn" onclick="switchTab('positions', this)">📂 Positions</button>
+        <button class="tab-btn" id="tabPositionsBtn" onclick="switchTab('positions', this)">📂 Positions</button>
         <button class="tab-btn" onclick="switchTab('markets', this)">🌤️ Markets</button>
         <button class="tab-btn" onclick="switchTab('backtest', this)">📈 Backtest</button>
         <button class="tab-btn" onclick="switchTab('settings', this)">⚙️ Settings</button>
@@ -354,6 +355,16 @@ async function refreshStats() {
         $('statOpen').textContent = stats.open_trades;
         $('statWinRate').textContent = stats.win_rate.toFixed(1) + '%';
         $('statTotal').textContent = stats.total_trades;
+        if (stats.daily_pnl !== undefined) {
+            $('statDailyPnl').textContent = (stats.daily_pnl >= 0 ? '+' : '') + usd(stats.daily_pnl);
+            $('statDailyPnl').className = 'value ' + (stats.daily_pnl >= 0 ? 'green' : 'red');
+        }
+        // Update Positions tab badge with open count
+        const posBtn = $('tabPositionsBtn');
+        if (posBtn) {
+            const n = stats.open_trades || 0;
+            posBtn.textContent = n > 0 ? `📂 Positions (${n})` : '📂 Positions';
+        }
     } catch(e) {}
     try {
         const bal = await api('/api/balance');
@@ -707,6 +718,8 @@ async function loadConfig() {
             {label: 'Max Spread ¢',             key: 'max_spread_cents',              val: cfg.max_spread_cents,                               step: '1'},
             {label: 'Min Volume',               key: 'min_liquidity_volume',          val: cfg.min_liquidity_volume,                           step: '10'},
             {label: 'Exit Loss %',              key: 'exit_loss_threshold',           val: (cfg.exit_loss_threshold*100).toFixed(0),           step: '5', convert: 'pct'},
+            {label: 'Min Confidence %',         key: 'min_confidence_threshold',      val: (cfg.min_confidence_threshold*100).toFixed(0),      step: '5', convert: 'pct'},
+            {label: 'Max Days to Expiry',       key: 'max_days_to_expiry',            val: cfg.max_days_to_expiry,                             step: '1'},
         ];
 
         $('configGridRisk').innerHTML = _buildGrid(riskFields)

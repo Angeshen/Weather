@@ -344,6 +344,7 @@ def get_stats() -> dict:
         "losses": settled - wins,
         "win_rate": (wins / settled * 100) if settled > 0 else 0,
         "total_pnl": round(total_pnl, 2),
+        "daily_pnl": round(get_daily_loss_today(), 2),
         "bankroll": round(get_current_bankroll(), 2),
     }
 

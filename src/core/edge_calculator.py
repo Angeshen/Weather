@@ -138,9 +138,12 @@ def evaluate_market(market: dict, forecast: dict, bankroll: float) -> dict | Non
     model_prob_below = forecast["prob_below"]
     confidence = forecast["confidence"]
 
-    # Trade when ensemble strongly agrees
-    # 0.65 confidence = 82.5%+ of members on one side
-    if confidence < 0.65:
+    # Trade when ensemble strongly agrees (configurable threshold)
+    if confidence < settings.min_confidence_threshold:
+        return None
+
+    # Skip markets too far out — GFS accuracy degrades fast beyond 2 days
+    if days_to_expiry > settings.max_days_to_expiry:
         return None
     market_type = market.get("market_type", "high_temp")
     unit = market.get("unit", "°F")

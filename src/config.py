@@ -46,6 +46,8 @@ class Settings(BaseSettings):
     max_spread_cents: int = Field(default=15, alias="MAX_SPREAD_CENTS")
     min_liquidity_volume: int = Field(default=50, alias="MIN_LIQUIDITY_VOLUME")
     exit_loss_threshold: float = Field(default=0.20, alias="EXIT_LOSS_THRESHOLD")
+    min_confidence_threshold: float = Field(default=0.65, alias="MIN_CONFIDENCE_THRESHOLD")
+    max_days_to_expiry: int = Field(default=2, alias="MAX_DAYS_TO_EXPIRY")
 
     # Weather market tickers — only series confirmed to exist on Kalshi
     # Kalshi currently only offers high temp for 5 cities (NY, CHI, MIA, LAX, DEN)

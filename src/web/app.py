@@ -404,6 +404,8 @@ def api_config():
         "max_spread_cents": settings.max_spread_cents,
         "min_liquidity_volume": settings.min_liquidity_volume,
         "exit_loss_threshold": settings.exit_loss_threshold,
+        "min_confidence_threshold": settings.min_confidence_threshold,
+        "max_days_to_expiry": settings.max_days_to_expiry,
     })
 
 
@@ -444,6 +446,8 @@ def api_save_settings():
         "max_spread_cents": ("max_spread_cents", "MAX_SPREAD_CENTS", int),
         "min_liquidity_volume": ("min_liquidity_volume", "MIN_LIQUIDITY_VOLUME", int),
         "exit_loss_threshold": ("exit_loss_threshold", "EXIT_LOSS_THRESHOLD", float),
+        "min_confidence_threshold": ("min_confidence_threshold", "MIN_CONFIDENCE_THRESHOLD", float),
+        "max_days_to_expiry": ("max_days_to_expiry", "MAX_DAYS_TO_EXPIRY", int),
     }
 
     for key, (attr, env_key, cast) in editable.items():
