@@ -38,14 +38,10 @@ class Settings(BaseSettings):
     # Max open trades per city (prevents over-concentration in one location)
     max_trades_per_city: int = Field(default=2, alias="MAX_TRADES_PER_CITY")
 
-    # Weather market tickers — high temp, low temp, precipitation
+    # Weather market tickers — only series confirmed to exist on Kalshi
+    # Kalshi currently only offers high temp for 5 cities (NY, CHI, MIA, LAX, DEN)
     weather_series: list[str] = [
         "KXHIGHNY", "KXHIGHCHI", "KXHIGHMIA", "KXHIGHLAX", "KXHIGHDEN",
-        "KXHIGHSEA", "KXHIGHDAL", "KXHIGHATL", "KXHIGHPHX",
-        "KXLOWNY", "KXLOWCHI", "KXLOWMIA", "KXLOWLAX", "KXLOWDEN",
-        "KXLOWSEA", "KXLOWDAL", "KXLOWATL", "KXLOWPHX",
-        "KXRAINNY", "KXRAINCHI", "KXRAINMIA", "KXRAINLAX", "KXRAINDEN",
-        "KXRAINSEA", "KXRAINDAL", "KXRAINATL", "KXRAINPHX",
     ]
 
     class Config:

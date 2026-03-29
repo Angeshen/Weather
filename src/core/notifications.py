@@ -72,22 +72,37 @@ def notify_scan_summary(markets_count: int, signals_count: int, trades_executed:
 
 
 def notify_daily_summary(stats: dict):
-    """Send end-of-day performance summary."""
+    """Send end-of-day performance summary with unrealized P&L, streak, and day comparison."""
+    import time
     pnl = stats.get("total_pnl", 0)
     pnl_emoji = "📈" if pnl >= 0 else "📉"
     win_rate = stats.get("win_rate", 0)
+    bankroll = stats.get("bankroll", 0)
+    prev_bankroll = stats.get("prev_bankroll", bankroll)
+    day_change = bankroll - prev_bankroll
+    day_emoji = "📈" if day_change >= 0 else "📉"
+
+    unrealized = stats.get("unrealized_pnl")
+    unrealized_str = f"📊 Unrealized: <b>${unrealized:+.2f}</b>\n" if unrealized is not None else ""
+
+    streak = stats.get("win_streak", 0)
+    streak_str = ""
+    if streak >= 3:
+        streak_str = f"🔥 Win streak: <b>{streak}</b>\n"
+    elif streak <= -3:
+        streak_str = f"❄️ Loss streak: <b>{abs(streak)}</b>\n"
 
     text = (
-        f"📊 <b>Daily Summary</b>\n"
-        f"\n"
-        f"💰 Bankroll: <b>${stats.get('bankroll', 0):,.2f}</b>\n"
-        f"{pnl_emoji} Total P&L: <b>${pnl:+,.2f}</b>\n"
-        f"📈 Win Rate: {win_rate:.1f}%\n"
-        f"\n"
-        f"Total Trades: {stats.get('total_trades', 0)}\n"
+        f"📊 <b>Daily Summary</b>\n\n"
+        f"💰 Bankroll: <b>${bankroll:,.2f}</b>\n"
+        f"{day_emoji} Today: <b>${day_change:+,.2f}</b>\n"
+        f"{pnl_emoji} All-time P&L: <b>${pnl:+,.2f}</b>\n"
+        f"{unrealized_str}"
+        f"🎯 Win Rate: {win_rate:.1f}%\n"
+        f"{streak_str}\n"
         f"Open: {stats.get('open_trades', 0)} | "
-        f"Settled: {stats.get('settled_trades', 0)}\n"
-        f"Wins: {stats.get('wins', 0)} | Losses: {stats.get('losses', 0)}"
+        f"Settled: {stats.get('settled_trades', 0)} | "
+        f"W/L: {stats.get('wins', 0)}/{stats.get('losses', 0)}"
     )
     _send_message(text)
 
@@ -136,6 +151,84 @@ def notify_settlement(results: dict):
 
     lines.append(f"\nTotal P&L: <b>${pnl:+.2f}</b>  |  W/L: {wins}/{losses}")
     _send_message("\n".join(lines))
+
+
+def notify_blocked_signal(signal: dict, reason: str):
+    """Alert when a high-edge signal is blocked by risk limits."""
+    edge = signal.get("edge", 0)
+    if edge < 0.20:
+        return  # Only alert on strong signals (20%+ edge) that get blocked
+    unit = signal.get("unit", "°F")
+    text = (
+        f"🚫 <b>High-Edge Signal Blocked</b>\n\n"
+        f"<b>{signal['city']}</b> — {signal['target_date']}\n"
+        f"Direction: {signal['direction']}\n"
+        f"⚡ Edge: <b>{edge*100:.1f}%</b> | Confidence: {signal.get('confidence', 0)*100:.1f}%\n"
+        f"💰 Would-be size: ${signal.get('position_size_usd', 0):.2f}\n\n"
+        f"🔒 Blocked: <i>{reason}</i>"
+    )
+    _send_message(text)
+
+
+_morning_ping_sent_date: str = ""
+
+def notify_morning_ping(markets_count: int, open_trades: int, bankroll: float):
+    """Send a morning liveness ping on the first scan of each day."""
+    global _morning_ping_sent_date
+    from datetime import date
+    today = date.today().isoformat()
+    if _morning_ping_sent_date == today:
+        return  # Already sent today
+    _morning_ping_sent_date = today
+    text = (
+        f"☀️ <b>Bot Active</b> — Good morning!\n\n"
+        f"💰 Bankroll: <b>${bankroll:,.2f}</b>\n"
+        f"📡 Watching <b>{markets_count}</b> markets\n"
+        f"📂 Open positions: <b>{open_trades}</b>"
+    )
+    _send_message(text)
+
+
+_last_confidence_spike: dict = {}
+
+def notify_confidence_spike(signal: dict):
+    """Alert when ensemble confidence rapidly jumps to 80%+ in one scan."""
+    import time
+    ticker = signal.get("ticker", "")
+    confidence = signal.get("confidence", 0)
+    if confidence < 0.80:
+        return
+    now = time.time()
+    last = _last_confidence_spike.get(ticker, 0)
+    if now - last < 7200:
+        return  # Max once per 2 hours per ticker
+    _last_confidence_spike[ticker] = now
+    unit = signal.get("unit", "°F")
+    text = (
+        f"⚡ <b>Confidence Spike</b>\n\n"
+        f"<b>{signal['city']}</b> — {signal['target_date']}\n"
+        f"Direction: {signal['direction']}\n"
+        f"🎯 Confidence: <b>{confidence*100:.1f}%</b> (rapid ensemble convergence)\n"
+        f"Edge: {signal.get('edge', 0)*100:.1f}% | Size: ${signal.get('position_size_usd', 0):.2f}"
+    )
+    _send_message(text)
+
+
+def notify_weekly_summary(stats: dict):
+    """Send weekly performance summary every Sunday."""
+    pnl = stats.get("total_pnl", 0)
+    week_pnl = stats.get("week_pnl", 0)
+    pnl_emoji = "📈" if week_pnl >= 0 else "📉"
+    text = (
+        f"📅 <b>Weekly Summary</b>\n\n"
+        f"💰 Bankroll: <b>${stats.get('bankroll', 0):,.2f}</b>\n"
+        f"{pnl_emoji} This week: <b>${week_pnl:+,.2f}</b>\n"
+        f"📊 All-time P&L: <b>${pnl:+,.2f}</b>\n"
+        f"🎯 Win Rate: {stats.get('win_rate', 0):.1f}%\n\n"
+        f"Trades this week: {stats.get('week_trades', 0)}\n"
+        f"W/L: {stats.get('week_wins', 0)}/{stats.get('week_losses', 0)}"
+    )
+    _send_message(text)
 
 
 def test_notification() -> bool:

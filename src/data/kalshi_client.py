@@ -111,6 +111,21 @@ class KalshiClient:
             body["no_price"] = price_cents if side == "no" else None
         return self._post("/portfolio/orders", body=body)
 
+    def sell_order(self, ticker: str, side: str, quantity: int, price_cents: int) -> dict:
+        """Sell (exit) an existing position at the given price."""
+        body = {
+            "ticker": ticker,
+            "action": "sell",
+            "side": side,
+            "count": quantity,
+            "type": "limit",
+        }
+        if side == "yes":
+            body["yes_price"] = price_cents
+        else:
+            body["no_price"] = price_cents
+        return self._post("/portfolio/orders", body=body)
+
     def get_positions(self) -> dict:
         return self._get("/portfolio/positions")
 

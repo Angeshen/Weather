@@ -111,6 +111,52 @@ def _enrich_market(market: dict, parsed: dict) -> dict:
     return parsed
 
 
+def discover_active_series() -> list[str]:
+    """
+    Query Kalshi to discover which weather series currently have open markets.
+    Returns list of active series tickers to replace the hardcoded list.
+    Falls back to settings.weather_series if discovery fails.
+    """
+    import httpx
+    base_url = "https://api.elections.kalshi.com/trade-api/v2"
+    found = set()
+
+    try:
+        with httpx.Client(timeout=15.0) as http:
+            # Check all possible series combinations we know about
+            candidates = []
+            for prefix in SERIES_PREFIXES:
+                for suffix in ["NY", "CHI", "MIA", "LAX", "DEN",
+                               "SEA", "DAL", "ATL", "PHX", "HOU", "BOS", "PHI"]:
+                    candidates.append(f"{prefix}{suffix}")
+
+            for series in candidates:
+                try:
+                    resp = http.get(
+                        f"{base_url}/markets",
+                        params={"series_ticker": series, "status": "open", "limit": 1},
+                        timeout=5.0,
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        if data.get("markets"):
+                            found.add(series)
+                except Exception:
+                    continue
+    except Exception:
+        pass
+
+    if found:
+        # Only return series we have city config for
+        active = [s for s in sorted(found) if s in CITY_CONFIG]
+        if active:
+            print(f"[market_scanner] Auto-discovered {len(active)} active series: {active}")
+            return active
+
+    # Fall back to hardcoded list
+    return settings.weather_series
+
+
 def scan_weather_markets(client: KalshiClient) -> list[dict]:
     """
     Scan all KXHIGH series for open weather markets using authenticated client.

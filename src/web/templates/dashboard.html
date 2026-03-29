@@ -411,12 +411,15 @@ function renderSignals(signals) {
         $('signalsBody').innerHTML = '<div class="empty-state"><div class="icon">&#9989;</div><p>No actionable signals — market prices align with forecasts</p></div>';
         return;
     }
-    let html = '<table><thead><tr><th>City</th><th>Type</th><th>Date</th><th>Threshold</th><th>Direction</th><th>Model</th><th>Market</th><th>Edge</th><th>Confidence</th><th>Size</th><th>Forecast</th></tr></thead><tbody>';
+    let html = '<table><thead><tr><th>City</th><th>Type</th><th>Date</th><th>Threshold</th><th>Direction</th><th>Model</th><th>Market</th><th>Edge</th><th>Confidence</th><th>Trend</th><th>Size</th><th>Forecast</th></tr></thead><tbody>';
     for (const s of signals) {
         const edgeClass = s.edge >= 0.15 ? 'edge-high' : 'edge-medium';
         const dirClass = s.direction.includes('ABOVE') || s.direction.includes('YES') ? 'dir-above' : 'dir-below';
         const unit = s.unit || '\u00b0F';
         const typeLabel = {'high_temp':'High','low_temp':'Low','precipitation':'Rain'}[s.market_type] || s.market_type;
+        const trendMap = {'rising': '↑ Rising', 'falling': '↓ Falling', 'stable': '→ Stable', 'new': '✦ New'};
+        const trendStyle = {'rising': 'color:var(--green)', 'falling': 'color:var(--red)', 'stable': 'color:var(--text-dim)', 'new': 'color:var(--cyan)'};
+        const trend = s.confidence_trend || 'new';
         html += `<tr>
             <td><strong>${s.city}</strong></td>
             <td>${typeLabel}</td>
@@ -427,6 +430,7 @@ function renderSignals(signals) {
             <td>${pct(s.market_price)}</td>
             <td class="${edgeClass}">${pct(s.edge)}</td>
             <td>${pct(s.confidence)}</td>
+            <td style="${trendStyle[trend]||''}">${trendMap[trend]||trend}</td>
             <td>${usd(s.position_size_usd)}</td>
             <td>${s.forecast_mean}${unit} (${s.forecast_min}-${s.forecast_max})</td>
         </tr>`;

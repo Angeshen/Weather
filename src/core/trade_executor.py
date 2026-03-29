@@ -348,6 +348,92 @@ def get_stats() -> dict:
     }
 
 
+EXIT_LOSS_THRESHOLD = 0.20  # Exit if position has lost 20%+ of its value
+
+
+def exit_losing_positions(current_markets: list, client=None) -> list[dict]:
+    """
+    Check open trades against current market prices.
+    If a position has lost 20%+ of its value, exit it to cut losses.
+
+    Returns list of exited trades with realized P&L.
+    """
+    from src.core.notifications import notify_risk_alert
+    conn = get_db()
+    conn.row_factory = sqlite3.Row
+    open_trades = conn.execute(
+        "SELECT * FROM trades WHERE status = 'open'"
+    ).fetchall()
+    conn.close()
+
+    price_lookup = {m["ticker"]: m for m in current_markets}
+    exited = []
+
+    for row in open_trades:
+        trade = dict(row)
+        ticker = trade["ticker"]
+        market = price_lookup.get(ticker)
+        if not market:
+            continue
+
+        entry_price = trade.get("market_price", 0)
+        contracts = trade.get("contracts", 0)
+        cost = trade.get("position_size_usd", 0)
+        side = trade.get("side", "yes")
+
+        if not entry_price or not contracts or not cost:
+            continue
+
+        # Current bid price (what we can sell at)
+        if side == "yes":
+            current_bid = market.get("yes_bid") or market.get("yes_ask", 0)
+        else:
+            current_bid = market.get("no_bid") or market.get("no_ask", 0)
+
+        if not current_bid:
+            continue
+
+        # Value if we sell now vs entry cost
+        current_value = current_bid * contracts
+        loss_pct = (cost - current_value) / cost if cost > 0 else 0
+
+        if loss_pct < EXIT_LOSS_THRESHOLD:
+            continue  # Position is fine, hold
+
+        # Exit the position
+        realized_pnl = round(current_value - cost, 2)
+
+        if settings.trading_mode == "live" and client:
+            try:
+                sell_price_cents = int(current_bid * 100)
+                client.sell_order(ticker, side, contracts, sell_price_cents)
+            except Exception as e:
+                notify_risk_alert(f"Exit order failed for {ticker}: {e}")
+                continue
+
+        # Mark as settled with loss in DB
+        conn = get_db()
+        from datetime import datetime, timezone
+        conn.execute(
+            "UPDATE trades SET status = 'settled', pnl_usd = ?, settled_at = ? WHERE id = ?",
+            (realized_pnl, datetime.now(timezone.utc).isoformat(), trade["id"])
+        )
+        conn.commit()
+        conn.close()
+
+        bankroll = get_current_bankroll() + realized_pnl
+        log_bankroll(bankroll, f"Exited {ticker} early: {loss_pct*100:.0f}% loss")
+
+        notify_risk_alert(
+            f"⚡ Early exit: {ticker}\n"
+            f"Entry: {entry_price*100:.0f}¢ → Exit: {current_bid*100:.0f}¢\n"
+            f"Realized P&L: ${realized_pnl:+.2f} ({loss_pct*100:.0f}% loss cut)"
+        )
+        exited.append({"ticker": ticker, "pnl": realized_pnl, "loss_pct": loss_pct})
+
+    return exited
+
+
 def get_win_rate_by_city() -> list[dict]:
     """Get win rate and P&L broken down by city."""
     conn = get_db()

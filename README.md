@@ -6,37 +6,46 @@ Automated weather prediction market bot for Kalshi. Uses **multi-model ensemble 
 
 ## Supported Markets
 
-| Type | Series | Example |
-|------|--------|---------|
-| **High Temperature** | KXHIGH | "Will NYC high be above 72°F?" |
-| **Low Temperature** | KXLOW | "Will Chicago low drop below 35°F?" |
-| **Precipitation** | KXRAIN | "Will Miami get >0.50 inches of rain?" |
+Kalshi currently offers **high temperature** markets for 5 cities. The bot auto-discovers which series are active on startup — if Kalshi expands to new cities or market types, it picks them up automatically.
 
-**Cities:** New York City, Chicago, Miami, Los Angeles, Denver
+| City | Series |
+|------|--------|
+| New York City | KXHIGHNY |
+| Chicago | KXHIGHCHI |
+| Miami | KXHIGHMIA |
+| Los Angeles | KXHIGHLAX |
+| Denver | KXHIGHDEN |
 
 ## How It Works
 
-1. **Scans** Kalshi for open weather markets across all 3 types and 5 cities
+1. **Auto-discovers** which Kalshi weather series have open markets (re-checks every 6 hours)
 2. **Fetches** multi-model ensemble forecasts (GFS + ECMWF + ICON) from Open-Meteo
 3. **Calculates** probability by counting how many ensemble members exceed the threshold
-4. **Filters** for strong confidence (65%+) with minimum 40 ensemble members
-5. **Compares** model probability vs market price to find edge (min 5%)
-6. **Sizes** positions using fractional Kelly criterion (20%) with $150 max per trade
-7. **Executes** trades (paper or live) with built-in risk management
-8. **Sends** Telegram notifications for trades, settlements, and daily summaries
+4. **Tracks confidence trend** across scans — rising vs falling ensemble agreement
+5. **Filters** for strong confidence (65%+) with minimum 40 ensemble members
+6. **Compares** model probability vs market price to find edge (min 5%)
+7. **Sizes** positions using fractional Kelly criterion (20%) with $150 max, scaled down for near-expiry markets
+8. **Executes** trades with per-city exposure limits (max 2 open per city)
+9. **Monitors** positions — exits automatically if a position loses 20%+ of its value
+10. **Settles** trades using Kalshi's official expiration value only (no premature settlements)
+11. **Sends** Telegram notifications for trades, settlements, alerts, and summaries
+12. **Accepts** Telegram commands to check status, trigger scans, pause/resume trading
 
 ## Strategy Parameters
 
 | Parameter | Value | Description |
 |-----------|-------|-------------|
-| Confidence Threshold | 65% | Only trade when 82.5%+ of ensemble members agree |
+| Confidence Threshold | 65% | Minimum ensemble agreement to trade |
 | Min Edge | 5% | Model must disagree with market by 5%+ |
 | Max Contract Price | 65¢ | Only buy contracts with reasonable risk/reward |
 | Min Contract Price | 5¢ | Avoid near-zero liquidity traps |
 | Min Ensemble Members | 40 | Need enough data for reliable probability |
 | Kelly Fraction | 20% | Position sizing (conservative fractional Kelly) |
 | Max Trade Size | $150 | Per-trade cap |
+| Max Concurrent Trades | 8 | Total open positions at once |
+| Max Trades Per City | 2 | Prevents over-concentration in one location |
 | Daily Loss Limit | $400 | Stop trading if daily losses exceed this |
+| Exit Loss Threshold | 20% | Auto-exit position if it loses 20%+ of value |
 | Scan Interval | 2 min | How often the bot checks for new opportunities |
 
 ---
@@ -273,7 +282,7 @@ systemctl restart kalshi-bot
 
 - **Test Telegram** — Click the "Test Telegram" button. You should get a message on your phone.
 - **Start Bot** — Click "Start Bot" (in paper mode). Check the activity log for scan results. If the Kalshi API key is wrong, you'll see an error here.
-- **Run Backtest** — Click "Run Backtest" to test the strategy against historical weather data. Uses real observed temperatures + GFS error distribution.
+- **Run Backtest** — Click "Run Backtest" to test the strategy against historical weather data. Fetches real GFS ensemble members from Open-Meteo archive for each historical date, falls back to simulated ensemble if unavailable. Uses the same probability logic as the live bot.
 - **Scan Now** — Click "Scan Now" for a one-time market scan.
 - **Settlement Check** — Click "Check Settlements" to verify auto-settlement works.
 
@@ -304,18 +313,52 @@ Switch modes from the dashboard toggle or by editing `TRADING_MODE` in `.env`.
 
 ## Features
 
-- **Web Dashboard** — Real-time stats, trade history, equity curve, activity log
-- **Telegram Notifications** — Trade alerts, risk warnings, daily P&L summaries, settlement results
-- **Auto-Settlement** — Checks NWS actual weather data and settles trades automatically
-- **Historical Backtest** — Tests strategy against real observed weather + GFS accuracy model
-- **Multi-Model Ensemble** — Combines GFS, ECMWF, and ICON for better accuracy
-- **Equity Curve** — Visual chart of bankroll over time
-- **Trade Notes** — Add notes to individual trades
+- **Web Dashboard** — Real-time stats, trade history with unrealized P&L + win profit, equity curve, city performance breakdown, activity log
+- **Confidence Trend** — Signals show ↑ Rising / ↓ Falling / → Stable trend based on successive scans
+- **Auto-Discovery** — Detects active Kalshi series on startup; re-checks every 6 hours for new markets
+- **Multi-Model Ensemble** — Combines GFS, ECMWF, and ICON (122+ members) for better probability accuracy
+- **Days-to-Expiry Sizing** — Position size scaled down for near-expiry markets (less time = less conviction)
+- **Per-City Exposure Limits** — Max 2 open trades per city to prevent over-concentration
+- **Auto-Exit Logic** — Sells position if market moves 20%+ against it to cut losses early
+- **Duplicate Prevention** — Never opens a second position on the same ticker
+- **Auto-Settlement** — Settles using Kalshi's official expiration value only (no premature settlements)
+- **Historical Backtest** — Uses real GFS ensemble archive data for historical dates, falls back to simulated if unavailable
+- **Telegram Notifications** — Full suite: trade alerts, settlements, morning ping, confidence spikes, blocked signals, daily + weekly summaries
+- **Telegram Commands** — Control the bot and check status directly from Telegram chat
 - **Mobile-Friendly** — Dashboard works on phones
+
+## Telegram Commands
+
+Message your Telegram bot directly to control the bot without opening the dashboard:
+
+| Command | Description |
+|---------|-------------|
+| `/help` | List all available commands |
+| `/status` | Bankroll, P&L, win rate, open trades, last scan time |
+| `/scan` | Trigger a manual market scan right now |
+| `/trades` | List all currently open positions |
+| `/pause` | Stop the bot from opening new trades |
+| `/resume` | Re-enable trade execution after a pause |
+
+> Commands only work from your configured `TELEGRAM_CHAT_ID` — anyone else gets rejected.
+
+## Telegram Notifications
+
+| Alert | When it fires |
+|-------|--------------|
+| 🔔 Trade Placed | Every new trade opened |
+| ✅/❌ Settlement | When a trade settles (win or loss) |
+| ⚡ Early Exit | When bot auto-exits a losing position (20%+ loss) |
+| 🚫 Blocked Signal | When edge > 20% signal is blocked by risk limits |
+| ⚡ Confidence Spike | When ensemble confidence jumps to 80%+ on a ticker |
+| ☀️ Morning Ping | First scan each day — bankroll + markets watched |
+| 📊 Daily Summary | Every day at configured time — includes unrealized P&L, streak, day-over-day change |
+| 📅 Weekly Summary | Every Sunday — week's trades, W/L, P&L |
+| 🟢/🔴 Bot Status | When bot starts or stops |
 
 ## Settlement
 
-Markets settle based on the **NWS Daily Climate Report** — not AccuWeather, iPhone weather, etc.
+Markets settle based on **Kalshi's official expiration value** — the same value Kalshi uses to resolve the market. The bot never uses Open-Meteo or external sources to settle (avoids premature settlement on unfinalized same-day data).
 
 ## Project Structure
 
@@ -334,21 +377,21 @@ kalshi-weather-bot/
 │   ├── config.py              # Settings + city configuration
 │   │
 │   ├── core/
-│   │   ├── bot.py             # Main bot loop
-│   │   ├── edge_calculator.py # Edge calculation + Kelly sizing
-│   │   ├── trade_executor.py  # Paper/live execution + SQLite
-│   │   ├── backtest.py        # Historical backtest engine
-│   │   ├── settlement.py      # Auto-settlement checker
-│   │   └── notifications.py   # Telegram notifications
+│   │   ├── edge_calculator.py # Edge calculation + Kelly sizing + days-to-expiry scaling
+│   │   ├── trade_executor.py  # Paper/live execution + SQLite + exit logic + win rate by city
+│   │   ├── backtest.py        # Historical backtest (real GFS ensemble archive)
+│   │   ├── settlement.py      # Auto-settlement using Kalshi official expiration value
+│   │   ├── notifications.py   # Telegram notifications (all alert types + summaries)
+│   │   └── telegram_commands.py  # Telegram command listener (/status, /scan, /pause, etc.)
 │   │
 │   ├── data/
-│   │   ├── kalshi_client.py   # Kalshi API client (EC key auth)
-│   │   ├── market_scanner.py  # Scans KXHIGH/KXLOW/KXRAIN markets
-│   │   └── weather.py         # Multi-model ensemble forecasts
+│   │   ├── kalshi_client.py   # Kalshi API client (RSA-PSS auth, buy + sell orders)
+│   │   ├── market_scanner.py  # Scans markets + auto-discovers active series
+│   │   └── weather.py         # Multi-model ensemble forecasts (GFS + ECMWF + ICON)
 │   │
 │   └── web/
-│       ├── app.py             # Flask API routes
-│       └── templates/         # Dashboard HTML
+│       ├── app.py             # Flask API routes + bot loop + confidence trend tracking
+│       └── templates/         # Dashboard HTML (unrealized P&L, win profit, city stats, trends)
 │
 └── trades.db                  # SQLite database (auto-created)
 ```

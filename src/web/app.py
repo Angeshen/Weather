@@ -11,7 +11,11 @@ from flask import Flask, jsonify, render_template, request
 
 from src.config import settings
 from src.data.kalshi_client import KalshiClient
-from src.data.market_scanner import scan_weather_markets, scan_weather_markets_public
+from src.data.market_scanner import (
+    scan_weather_markets,
+    scan_weather_markets_public,
+    discover_active_series,
+)
 from src.data.weather import get_forecast_for_city
 from src.core.edge_calculator import evaluate_market
 from src.core.trade_executor import (
@@ -27,6 +31,7 @@ from src.core.trade_executor import (
     get_open_trade_count,
     get_win_rate_by_city,
     get_open_trades_with_current_prices,
+    exit_losing_positions,
 )
 from src.core.notifications import (
     notify_bot_status,
@@ -34,10 +39,15 @@ from src.core.notifications import (
     notify_scan_summary,
     notify_settlement,
     notify_risk_alert,
+    notify_blocked_signal,
+    notify_morning_ping,
+    notify_confidence_spike,
+    notify_weekly_summary,
     test_notification,
 )
 from src.core.settlement import settle_open_trades
 from src.core.backtest import run_backtest, get_backtest_progress
+from src.core.telegram_commands import start_command_listener, is_paused
 
 app = Flask(
     __name__,
@@ -53,6 +63,7 @@ bot_state = {
     "last_signals": [],
     "last_markets": [],
     "scan_count": 0,
+    "confidence_history": {},  # ticker -> list of (timestamp, confidence) tuples
 }
 
 
@@ -111,6 +122,11 @@ def bot_loop():
     init_db()
     log_bankroll(get_current_bankroll(), "Bot started via GUI")
 
+    # Auto-discover active Kalshi series on startup
+    active_series = discover_active_series()
+    settings.weather_series = active_series
+    last_discovery = time.time()
+
     client = None
     if settings.trading_mode == "live":
         try:
@@ -119,6 +135,11 @@ def bot_loop():
             pass
 
     while bot_state["running"]:
+        # Re-discover series every 6 hours in case Kalshi adds new markets
+        if time.time() - last_discovery > 21600:
+            active_series = discover_active_series()
+            settings.weather_series = active_series
+            last_discovery = time.time()
         try:
             if settings.trading_mode == "live" and client:
                 markets = scan_weather_markets(client)
@@ -145,14 +166,50 @@ def bot_loop():
 
             signals.sort(key=lambda s: s["edge"], reverse=True)
 
-            # Execute trades
+            # Track confidence trend per ticker (keep last 5 readings)
+            now_ts = time.time()
+            for sig in signals:
+                ticker = sig["ticker"]
+                hist = bot_state["confidence_history"].setdefault(ticker, [])
+                hist.append((now_ts, sig["confidence"]))
+                # Keep only last 5 readings
+                bot_state["confidence_history"][ticker] = hist[-5:]
+                # Annotate signal with trend direction
+                if len(hist) >= 2:
+                    delta = hist[-1][1] - hist[-2][1]
+                    sig["confidence_trend"] = "rising" if delta > 0.01 else "falling" if delta < -0.01 else "stable"
+                else:
+                    sig["confidence_trend"] = "new"
+
+            clean_markets = [{k: v for k, v in m.items() if k != "raw_market"} for m in markets]
+
+            # Morning liveness ping (once per day)
+            try:
+                notify_morning_ping(len(markets), get_open_trade_count(), bankroll)
+            except Exception:
+                pass
+
+            # Confidence spike alerts
+            try:
+                for sig in signals:
+                    notify_confidence_spike(sig)
+            except Exception:
+                pass
+
+            # Execute trades — skip if paused via /pause command
             executed = 0
-            for signal in signals:
-                if executed >= settings.max_concurrent_trades:
-                    break
-                result = execute_trade(signal, client)
-                if result.get("status") not in ("blocked", "failed"):
-                    executed += 1
+            if not is_paused():
+                for signal in signals:
+                    if executed >= settings.max_concurrent_trades:
+                        notify_blocked_signal(signal, "Max concurrent trades reached")
+                        continue
+                    result = execute_trade(signal, client)
+                    if result.get("status") not in ("blocked", "failed"):
+                        executed += 1
+                    elif result.get("status") == "blocked":
+                        reason = result.get("reason", "Unknown")
+                        if "Already have open" not in reason:
+                            notify_blocked_signal(signal, reason)
 
             # Check for settlements every scan
             try:
@@ -162,29 +219,42 @@ def bot_loop():
             except Exception:
                 pass
 
-            # Stale signal detection — warn if market price moved 10%+ against open position
+            # Exit positions that have lost 20%+ of value
             try:
-                price_lookup = {m["ticker"]: m for m in markets}
-                open_trades = get_open_trades_with_current_prices(
-                    [{k: v for k, v in m.items() if k != "raw_market"} for m in markets]
-                )
-                for ot in open_trades:
-                    if ot.get("unrealized_pnl") is None:
-                        continue
-                    entry = ot.get("market_price", 0)
-                    if not entry:
-                        continue
-                    drift = abs((ot.get("unrealized_pnl", 0)) / (entry * ot.get("contracts", 1) + 0.001))
-                    if drift >= 0.10:
-                        notify_risk_alert(
-                            f"Position drift alert: {ot['ticker']}\n"
-                            f"Entry: {entry*100:.0f}¢  |  Unrealized P&L: ${ot['unrealized_pnl']:+.2f} ({drift*100:.0f}% move)"
-                        )
+                exit_losing_positions(clean_markets, client)
+            except Exception:
+                pass
+
+            # Weekly summary — every Sunday at daily summary time
+            try:
+                now_dt = datetime.now(timezone.utc)
+                if now_dt.weekday() == 6:  # Sunday
+                    hour = settings.telegram_daily_summary_hour
+                    minute = settings.telegram_daily_summary_minute
+                    if now_dt.hour == hour and now_dt.minute == minute:
+                        from src.core.trade_executor import get_stats, get_db
+                        import sqlite3 as _sq
+                        conn = get_db()
+                        week_ago = (now_dt.replace(hour=0, minute=0, second=0) - __import__('datetime').timedelta(days=7)).isoformat()
+                        row = conn.execute(
+                            "SELECT COUNT(*), SUM(CASE WHEN pnl_usd>0 THEN 1 ELSE 0 END), "
+                            "SUM(CASE WHEN pnl_usd<=0 THEN 1 ELSE 0 END), COALESCE(SUM(pnl_usd),0) "
+                            "FROM trades WHERE status='settled' AND timestamp >= ?", (week_ago,)
+                        ).fetchone()
+                        conn.close()
+                        wk_trades, wk_wins, wk_losses, wk_pnl = row or (0, 0, 0, 0)
+                        base_stats = get_stats()
+                        notify_weekly_summary({
+                            **base_stats,
+                            "week_trades": wk_trades or 0,
+                            "week_wins": wk_wins or 0,
+                            "week_losses": wk_losses or 0,
+                            "week_pnl": wk_pnl or 0,
+                        })
             except Exception:
                 pass
 
             # Update state
-            clean_markets = [{k: v for k, v in m.items() if k != "raw_market"} for m in markets]
             bot_state["last_scan"] = datetime.now(timezone.utc).isoformat()
             bot_state["last_signals"] = signals
             bot_state["last_markets"] = clean_markets
@@ -483,13 +553,53 @@ def _daily_summary_loop():
     """Send a daily summary at the configured local time (hour:minute)."""
     import time as _time
     last_sent_date = None
+    prev_bankroll = None
+
     while True:
-        now = datetime.now()  # local time
+        now = datetime.now()
         today = now.strftime("%Y-%m-%d")
         target_hour = settings.telegram_daily_summary_hour
         target_minute = settings.telegram_daily_summary_minute
         if now.hour == target_hour and now.minute == target_minute and last_sent_date != today:
             stats = get_stats()
+
+            # Unrealized P&L from open positions
+            try:
+                open_enriched = get_open_trades_with_current_prices(bot_state.get("last_markets", []))
+                unrealized = sum(t["unrealized_pnl"] for t in open_enriched if t.get("unrealized_pnl") is not None)
+                stats["unrealized_pnl"] = round(unrealized, 2)
+            except Exception:
+                pass
+
+            # Previous bankroll for day-over-day comparison
+            if prev_bankroll is not None:
+                stats["prev_bankroll"] = prev_bankroll
+            prev_bankroll = stats.get("bankroll", prev_bankroll)
+
+            # Win streak calculation
+            try:
+                from src.core.trade_executor import get_db as _get_db
+                conn = _get_db()
+                recent = conn.execute(
+                    "SELECT pnl_usd FROM trades WHERE status='settled' ORDER BY id DESC LIMIT 20"
+                ).fetchall()
+                conn.close()
+                streak = 0
+                for (pnl,) in recent:
+                    if pnl is None:
+                        break
+                    if streak == 0:
+                        streak = 1 if pnl > 0 else -1
+                    elif streak > 0 and pnl > 0:
+                        streak += 1
+                    elif streak < 0 and pnl <= 0:
+                        streak -= 1
+                    else:
+                        break
+                stats["win_streak"] = streak
+            except Exception:
+                pass
+
             notify_daily_summary(stats)
             last_sent_date = today
         _time.sleep(30)
@@ -499,3 +609,4 @@ def _daily_summary_loop():
 if settings.telegram_bot_token and settings.telegram_chat_id:
     _daily_thread = threading.Thread(target=_daily_summary_loop, daemon=True)
     _daily_thread.start()
+    start_command_listener(bot_state)
