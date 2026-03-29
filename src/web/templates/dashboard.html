@@ -191,6 +191,17 @@
             </div>
         </div>
 
+        <!-- Open Positions -->
+        <div class="panel">
+            <div class="panel-header">
+                <span>Open Positions</span>
+                <span class="last-scan" id="openPosCount">0 open</span>
+            </div>
+            <div class="panel-body" id="openPosBody">
+                <div class="empty-state"><div class="icon">&#128BC;</div><p>No open positions</p></div>
+            </div>
+        </div>
+
         <!-- Markets + Trades -->
         <div class="two-col">
             <div class="panel">
@@ -353,12 +364,67 @@ async function refreshStatus() {
     } catch(e) {}
 }
 
+async function refreshOpenPositions(openTrades) {
+    const body = $('openPosBody');
+    const countEl = $('openPosCount');
+    if (!openTrades || !openTrades.length) {
+        countEl.textContent = '0 open';
+        body.innerHTML = '<div class="empty-state"><div class="icon">&#128BC;</div><p>No open positions</p></div>';
+        return;
+    }
+    countEl.textContent = openTrades.length + ' open';
+    let totalUnrealized = 0;
+    let html = '<table><thead><tr><th>Ticker</th><th>City</th><th>Dir</th><th>Entry</th><th>Current</th><th>Contracts</th><th>Cost</th><th>Unrealized</th><th>Target</th><th>Age</th></tr></thead><tbody>';
+    for (const t of openTrades) {
+        const unreal = t.unrealized_pnl;
+        if (unreal != null) totalUnrealized += unreal;
+        const unrealClass = unreal == null ? '' : unreal >= 0 ? 'pnl-pos' : 'pnl-neg';
+        const unrealStr = unreal != null ? `<span class="${unrealClass}">${unreal >= 0 ? '+' : ''}${usd(unreal)}</span>` : '—';
+        const entryPct = t.market_price != null ? pct(t.market_price) : '—';
+        const curPct = t.current_price != null ? pct(t.current_price) : '—';
+        const dirClass = (t.direction||'').includes('ABOVE') || t.side === 'yes' ? 'dir-above' : 'dir-below';
+        // Age
+        let age = '—';
+        if (t.timestamp) {
+            const diffH = Math.floor((Date.now() - new Date(t.timestamp)) / 3600000);
+            const diffD = Math.floor(diffH / 24);
+            age = diffD > 0 ? `${diffD}d ${diffH%24}h` : `${diffH}h`;
+        }
+        // Win target = profit if settles in our favor
+        const target = (t.contracts && t.position_size_usd)
+            ? `<span class="pnl-pos">+${usd(t.contracts - t.position_size_usd)}</span>`
+            : '—';
+        html += `<tr>
+            <td><code style="font-size:11px">${t.ticker||'?'}</code></td>
+            <td>${t.city||'?'}</td>
+            <td class="${dirClass}">${(t.side||'').toUpperCase()}</td>
+            <td style="color:var(--text-dim)">${entryPct}</td>
+            <td style="font-weight:600">${curPct}</td>
+            <td>${t.contracts||'?'}</td>
+            <td>${t.position_size_usd ? usd(t.position_size_usd) : '—'}</td>
+            <td>${unrealStr}</td>
+            <td>${target}</td>
+            <td style="color:var(--text-dim);font-size:11px">${age}</td>
+        </tr>`;
+    }
+    html += '</tbody></table>';
+    // Unrealized P&L summary bar
+    const totalClass = totalUnrealized >= 0 ? 'pnl-pos' : 'pnl-neg';
+    html += `<div style="padding:10px 16px;border-top:1px solid var(--border);font-size:13px;display:flex;justify-content:space-between;align-items:center;">
+        <span style="color:var(--text-dim)">Total Unrealized P&amp;L</span>
+        <span class="${totalClass}" style="font-weight:700;font-size:15px">${totalUnrealized >= 0 ? '+' : ''}${usd(totalUnrealized)}</span>
+    </div>`;
+    body.innerHTML = html;
+}
+
 async function refreshTrades() {
     try {
         const [trades, openTrades] = await Promise.all([
             api('/api/trades?limit=20'),
             api('/api/open-trades').catch(() => []),
         ]);
+        // Update open positions panel with live data
+        await refreshOpenPositions(openTrades);
         const unrealizedMap = {};
         for (const t of openTrades) {
             if (t.unrealized_pnl !== null && t.unrealized_pnl !== undefined) {
