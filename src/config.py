@@ -38,6 +38,15 @@ class Settings(BaseSettings):
     # Max open trades per city (prevents over-concentration in one location)
     max_trades_per_city: int = Field(default=2, alias="MAX_TRADES_PER_CITY")
 
+    # Trading thresholds (tunable from dashboard/env)
+    min_contract_price: float = Field(default=0.05, alias="MIN_CONTRACT_PRICE")
+    min_contract_price_high_edge: float = Field(default=0.01, alias="MIN_CONTRACT_PRICE_HIGH_EDGE")
+    high_edge_price_threshold: float = Field(default=0.20, alias="HIGH_EDGE_PRICE_THRESHOLD")
+    max_contract_price: float = Field(default=0.65, alias="MAX_CONTRACT_PRICE")
+    max_spread_cents: int = Field(default=15, alias="MAX_SPREAD_CENTS")
+    min_liquidity_volume: int = Field(default=50, alias="MIN_LIQUIDITY_VOLUME")
+    exit_loss_threshold: float = Field(default=0.20, alias="EXIT_LOSS_THRESHOLD")
+
     # Weather market tickers — only series confirmed to exist on Kalshi
     # Kalshi currently only offers high temp for 5 cities (NY, CHI, MIA, LAX, DEN)
     weather_series: list[str] = [

@@ -392,10 +392,18 @@ def api_config():
         "max_trade_size": settings.max_trade_size,
         "daily_loss_limit": settings.daily_loss_limit,
         "max_concurrent_trades": settings.max_concurrent_trades,
+        "max_trades_per_city": settings.max_trades_per_city,
         "min_edge_threshold": settings.min_edge_threshold,
         "kelly_fraction": settings.kelly_fraction,
         "scan_interval_seconds": settings.scan_interval_seconds,
         "weather_series": settings.weather_series,
+        "min_contract_price": settings.min_contract_price,
+        "min_contract_price_high_edge": settings.min_contract_price_high_edge,
+        "high_edge_price_threshold": settings.high_edge_price_threshold,
+        "max_contract_price": settings.max_contract_price,
+        "max_spread_cents": settings.max_spread_cents,
+        "min_liquidity_volume": settings.min_liquidity_volume,
+        "exit_loss_threshold": settings.exit_loss_threshold,
     })
 
 
@@ -428,6 +436,14 @@ def api_save_settings():
         "scan_interval_seconds": ("scan_interval_seconds", "SCAN_INTERVAL_SECONDS", int),
         "initial_bankroll": ("initial_bankroll", "INITIAL_BANKROLL", float),
         "max_concurrent_trades": ("max_concurrent_trades", "MAX_CONCURRENT_TRADES", int),
+        "max_trades_per_city": ("max_trades_per_city", "MAX_TRADES_PER_CITY", int),
+        "min_contract_price": ("min_contract_price", "MIN_CONTRACT_PRICE", float),
+        "min_contract_price_high_edge": ("min_contract_price_high_edge", "MIN_CONTRACT_PRICE_HIGH_EDGE", float),
+        "high_edge_price_threshold": ("high_edge_price_threshold", "HIGH_EDGE_PRICE_THRESHOLD", float),
+        "max_contract_price": ("max_contract_price", "MAX_CONTRACT_PRICE", float),
+        "max_spread_cents": ("max_spread_cents", "MAX_SPREAD_CENTS", int),
+        "min_liquidity_volume": ("min_liquidity_volume", "MIN_LIQUIDITY_VOLUME", int),
+        "exit_loss_threshold": ("exit_loss_threshold", "EXIT_LOSS_THRESHOLD", float),
     }
 
     for key, (attr, env_key, cast) in editable.items():

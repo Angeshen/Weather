@@ -348,7 +348,8 @@ def get_stats() -> dict:
     }
 
 
-EXIT_LOSS_THRESHOLD = 0.20  # Exit if position has lost 20%+ of its value
+def _exit_loss_threshold():
+    return settings.exit_loss_threshold
 
 
 def exit_losing_positions(current_markets: list, client=None) -> list[dict]:
@@ -396,7 +397,7 @@ def exit_losing_positions(current_markets: list, client=None) -> list[dict]:
         current_value = current_bid * contracts
         loss_pct = (cost - current_value) / cost if cost > 0 else 0
 
-        if loss_pct < EXIT_LOSS_THRESHOLD:
+        if loss_pct < _exit_loss_threshold():
             continue  # Position is fine, hold
 
         # Exit the position

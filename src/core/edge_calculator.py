@@ -81,11 +81,6 @@ def _direction_labels(market_type: str) -> tuple[str, str]:
         return ("ABOVE", "BELOW")
 
 
-# Liquidity thresholds — skip illiquid markets that are hard to fill at fair price
-_MIN_VOLUME = 50          # Minimum total contracts traded (weeds out ghost markets)
-_MAX_SPREAD_CENTS = 15    # Max bid-ask spread in cents (15¢ = very wide, skip)
-
-
 def _is_liquid(market: dict) -> bool:
     """
     Check if a market has enough liquidity to trade safely.
@@ -97,17 +92,17 @@ def _is_liquid(market: dict) -> bool:
     no_bid = market.get("no_bid") or 0
     no_ask = market.get("no_ask") or 0
 
-    if volume < _MIN_VOLUME:
+    if volume < settings.min_liquidity_volume:
         return False
 
     # Check spread on whichever side has quotes
     if yes_bid and yes_ask:
         spread = int(yes_ask * 100) - int(yes_bid * 100)
-        if spread > _MAX_SPREAD_CENTS:
+        if spread > settings.max_spread_cents:
             return False
     if no_bid and no_ask:
         spread = int(no_ask * 100) - int(no_bid * 100)
-        if spread > _MAX_SPREAD_CENTS:
+        if spread > settings.max_spread_cents:
             return False
 
     return True
@@ -157,13 +152,15 @@ def evaluate_market(market: dict, forecast: dict, bankroll: float) -> dict | Non
     signals = []
 
     def _build_signal(side, direction, model_prob, price):
-        # Only buy contracts up to 65¢ for reasonable risk/reward
-        # At 30¢ you risk $30 to win $70. At 65¢ you risk $65 to win $35.
-        if price > 0.65:
+        # Only buy contracts up to max_contract_price for reasonable risk/reward
+        if price > settings.max_contract_price:
             return None
 
-        # Skip very cheap contracts (< 5¢) — usually near-expiry noise
-        if price < 0.05:
+        # Skip very cheap contracts — usually near-expiry noise.
+        # Exception: allow down to min_contract_price_high_edge when edge is strong.
+        edge = model_prob - price
+        min_price = settings.min_contract_price_high_edge if edge >= settings.high_edge_price_threshold else settings.min_contract_price
+        if price < min_price:
             return None
 
         size = compute_position_size(model_prob, price, bankroll, days_to_expiry)
