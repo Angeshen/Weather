@@ -25,12 +25,15 @@ from src.core.trade_executor import (
     log_bankroll,
     init_db,
     get_open_trade_count,
+    get_win_rate_by_city,
+    get_open_trades_with_current_prices,
 )
 from src.core.notifications import (
     notify_bot_status,
     notify_daily_summary,
     notify_scan_summary,
     notify_settlement,
+    notify_risk_alert,
     test_notification,
 )
 from src.core.settlement import settle_open_trades
@@ -156,6 +159,27 @@ def bot_loop():
                 settle_results = settle_open_trades()
                 if settle_results.get("settled", 0) > 0:
                     notify_settlement(settle_results)
+            except Exception:
+                pass
+
+            # Stale signal detection — warn if market price moved 10%+ against open position
+            try:
+                price_lookup = {m["ticker"]: m for m in markets}
+                open_trades = get_open_trades_with_current_prices(
+                    [{k: v for k, v in m.items() if k != "raw_market"} for m in markets]
+                )
+                for ot in open_trades:
+                    if ot.get("unrealized_pnl") is None:
+                        continue
+                    entry = ot.get("market_price", 0)
+                    if not entry:
+                        continue
+                    drift = abs((ot.get("unrealized_pnl", 0)) / (entry * ot.get("contracts", 1) + 0.001))
+                    if drift >= 0.10:
+                        notify_risk_alert(
+                            f"Position drift alert: {ot['ticker']}\n"
+                            f"Entry: {entry*100:.0f}¢  |  Unrealized P&L: ${ot['unrealized_pnl']:+.2f} ({drift*100:.0f}% move)"
+                        )
             except Exception:
                 pass
 
@@ -382,6 +406,19 @@ def api_trade_note():
         return jsonify({"error": "trade_id required"}), 400
     update_trade_note(int(trade_id), note)
     return jsonify({"status": "saved"})
+
+
+@app.route("/api/city-stats")
+def api_city_stats():
+    """Win rate and P&L broken down by city."""
+    return jsonify(get_win_rate_by_city())
+
+
+@app.route("/api/open-trades")
+def api_open_trades():
+    """Open trades with unrealized P&L based on last scan prices."""
+    trades = get_open_trades_with_current_prices(bot_state.get("last_markets", []))
+    return jsonify(trades)
 
 
 @app.route("/api/debug/forecast")

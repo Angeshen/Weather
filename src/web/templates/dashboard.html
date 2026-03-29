@@ -226,6 +226,17 @@
             </div>
         </div>
 
+        <!-- City Performance -->
+        <div class="panel">
+            <div class="panel-header">
+                <span>Performance by City</span>
+                <span class="last-scan" id="cityStatsCount"></span>
+            </div>
+            <div class="panel-body" id="cityStatsBody">
+                <div class="empty-state"><div class="icon">🏙️</div><p>Win rate by city will appear after trades settle</p></div>
+            </div>
+        </div>
+
         <!-- Log + Config -->
         <div class="two-col">
             <div class="panel">
@@ -321,18 +332,29 @@ async function refreshStatus() {
 
 async function refreshTrades() {
     try {
-        const trades = await api('/api/trades?limit=20');
+        const [trades, openTrades] = await Promise.all([
+            api('/api/trades?limit=20'),
+            api('/api/open-trades').catch(() => []),
+        ]);
+        const unrealizedMap = {};
+        for (const t of openTrades) {
+            if (t.unrealized_pnl !== null && t.unrealized_pnl !== undefined) {
+                unrealizedMap[t.id] = t.unrealized_pnl;
+            }
+        }
         $('tradeCount').textContent = trades.length + ' trades';
         if (!trades.length) {
             $('tradesBody').innerHTML = '<div class="empty-state"><div class="icon">&#128202;</div><p>No trades yet</p></div>';
             return;
         }
-        let html = '<table><thead><tr><th>#</th><th>Time</th><th>Ticker</th><th>Side</th><th>Edge</th><th>Size</th><th>Status</th><th>P&L</th><th>Note</th></tr></thead><tbody>';
+        let html = '<table><thead><tr><th>#</th><th>Time</th><th>Ticker</th><th>Side</th><th>Edge</th><th>Size</th><th>Status</th><th>P&L</th><th>Unrealized</th><th>Note</th></tr></thead><tbody>';
         for (const t of trades) {
             const pnlClass = (t.pnl_usd || 0) > 0 ? 'pnl-pos' : (t.pnl_usd || 0) < 0 ? 'pnl-neg' : '';
-            const pnl = t.pnl_usd ? usd(t.pnl_usd) : '—';
+            const pnl = t.pnl_usd != null && t.status === 'settled' ? usd(t.pnl_usd) : '—';
             const time = t.timestamp ? t.timestamp.substring(11, 16) : '?';
             const note = t.note || '';
+            const unreal = unrealizedMap[t.id];
+            const unrealStr = unreal != null ? `<span class="${unreal >= 0 ? 'pnl-pos' : 'pnl-neg'}">${unreal >= 0 ? '+' : ''}${usd(unreal)}</span>` : '—';
             html += `<tr>
                 <td>${t.id}</td>
                 <td>${time}</td>
@@ -342,11 +364,35 @@ async function refreshTrades() {
                 <td>${t.position_size_usd ? usd(t.position_size_usd) : '?'}</td>
                 <td>${t.status}</td>
                 <td class="${pnlClass}">${pnl}</td>
+                <td>${t.status === 'open' ? unrealStr : '—'}</td>
                 <td><input id="note-${t.id}" value="${note.replace(/"/g,'&quot;')}" placeholder="Add note..." onblur="saveNote(${t.id})" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:2px 6px;font-size:11px;width:100px;"></td>
             </tr>`;
         }
         html += '</tbody></table>';
         $('tradesBody').innerHTML = html;
+    } catch(e) {}
+}
+
+async function refreshCityStats() {
+    try {
+        const stats = await api('/api/city-stats');
+        if (!stats.length) return;
+        $('cityStatsCount').textContent = stats.length + ' cities';
+        let html = '<table><thead><tr><th>City</th><th>Trades</th><th>W</th><th>L</th><th>Win Rate</th><th>P&L</th></tr></thead><tbody>';
+        for (const c of stats) {
+            const pnlClass = c.total_pnl >= 0 ? 'pnl-pos' : 'pnl-neg';
+            const wrClass = c.win_rate >= 70 ? 'edge-high' : c.win_rate >= 50 ? 'edge-medium' : 'pnl-neg';
+            html += `<tr>
+                <td><strong>${c.city}</strong></td>
+                <td>${c.total}</td>
+                <td style="color:var(--green)">${c.wins}</td>
+                <td style="color:var(--red)">${c.losses}</td>
+                <td class="${wrClass}">${c.win_rate}%</td>
+                <td class="${pnlClass}">${usd(c.total_pnl)}</td>
+            </tr>`;
+        }
+        html += '</tbody></table>';
+        $('cityStatsBody').innerHTML = html;
     } catch(e) {}
 }
 
@@ -799,9 +845,17 @@ async function saveNote(tradeId) {
     await refreshStatus();
     await refreshStats();
     await refreshTrades();
+    await refreshCityStats();
     await loadConfig();
     await loadEquityChart();
 })();
+
+setInterval(async () => {
+    await refreshStatus();
+    await refreshStats();
+    await refreshTrades();
+    await refreshCityStats();
+}, 30000);
 </script>
 </body>
 </html>

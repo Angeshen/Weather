@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     initial_bankroll: float = Field(default=5000.0, alias="INITIAL_BANKROLL")
     max_trade_size: float = Field(default=75.0, alias="MAX_TRADE_SIZE")
     daily_loss_limit: float = Field(default=250.0, alias="DAILY_LOSS_LIMIT")
-    max_concurrent_trades: int = Field(default=5, alias="MAX_CONCURRENT_TRADES")
+    max_concurrent_trades: int = Field(default=8, alias="MAX_CONCURRENT_TRADES")
     min_edge_threshold: float = Field(default=0.05, alias="MIN_EDGE_THRESHOLD")
     kelly_fraction: float = Field(default=0.15, alias="KELLY_FRACTION")
 
@@ -35,11 +35,17 @@ class Settings(BaseSettings):
     telegram_daily_summary_hour: int = Field(default=20, alias="TELEGRAM_DAILY_SUMMARY_HOUR")
     telegram_daily_summary_minute: int = Field(default=30, alias="TELEGRAM_DAILY_SUMMARY_MINUTE")
 
+    # Max open trades per city (prevents over-concentration in one location)
+    max_trades_per_city: int = Field(default=2, alias="MAX_TRADES_PER_CITY")
+
     # Weather market tickers — high temp, low temp, precipitation
     weather_series: list[str] = [
         "KXHIGHNY", "KXHIGHCHI", "KXHIGHMIA", "KXHIGHLAX", "KXHIGHDEN",
+        "KXHIGHSEA", "KXHIGHDAL", "KXHIGHATL", "KXHIGHPHX",
         "KXLOWNY", "KXLOWCHI", "KXLOWMIA", "KXLOWLAX", "KXLOWDEN",
+        "KXLOWSEA", "KXLOWDAL", "KXLOWATL", "KXLOWPHX",
         "KXRAINNY", "KXRAINCHI", "KXRAINMIA", "KXRAINLAX", "KXRAINDEN",
+        "KXRAINSEA", "KXRAINDAL", "KXRAINATL", "KXRAINPHX",
     ]
 
     class Config:
@@ -54,6 +60,10 @@ _CITIES = {
     "MIA": {"name": "Miami", "lat": 25.7617, "lon": -80.1918, "nws_station": "KMIA"},
     "LAX": {"name": "Los Angeles", "lat": 34.0522, "lon": -118.2437, "nws_station": "KLAX"},
     "DEN": {"name": "Denver", "lat": 39.7392, "lon": -104.9903, "nws_station": "KDEN"},
+    "SEA": {"name": "Seattle", "lat": 47.6062, "lon": -122.3321, "nws_station": "KSEA"},
+    "DAL": {"name": "Dallas", "lat": 32.7767, "lon": -96.7970, "nws_station": "KDFW"},
+    "ATL": {"name": "Atlanta", "lat": 33.7490, "lon": -84.3880, "nws_station": "KATL"},
+    "PHX": {"name": "Phoenix", "lat": 33.4484, "lon": -112.0740, "nws_station": "KPHX"},
 }
 
 # Map every series ticker to its city + market type

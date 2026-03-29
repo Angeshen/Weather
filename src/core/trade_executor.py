@@ -139,6 +139,16 @@ def is_ticker_already_open(ticker: str) -> bool:
     return (row[0] if row else 0) > 0
 
 
+def get_open_trade_count_for_city(city: str) -> int:
+    """Return number of open trades for a given city name."""
+    conn = get_db()
+    row = conn.execute(
+        "SELECT COUNT(*) FROM trades WHERE status = 'open' AND city = ?", (city,)
+    ).fetchone()
+    conn.close()
+    return row[0] if row else 0
+
+
 def check_risk_limits() -> tuple[bool, str]:
     """Check if we can place more trades based on risk limits."""
     daily_pnl = get_daily_loss_today()
@@ -261,6 +271,10 @@ def execute_trade(signal: dict, client: KalshiClient = None) -> dict:
     if is_ticker_already_open(signal["ticker"]):
         return {"status": "blocked", "reason": f"Already have open trade on {signal['ticker']}"}
 
+    city = signal.get("city", "")
+    if city and get_open_trade_count_for_city(city) >= settings.max_trades_per_city:
+        return {"status": "blocked", "reason": f"Max trades per city reached for {city} ({settings.max_trades_per_city})"}
+
     if settings.trading_mode == "live" and client:
         return execute_live_trade(signal, client)
     else:
@@ -332,6 +346,74 @@ def get_stats() -> dict:
         "total_pnl": round(total_pnl, 2),
         "bankroll": round(get_current_bankroll(), 2),
     }
+
+
+def get_win_rate_by_city() -> list[dict]:
+    """Get win rate and P&L broken down by city."""
+    conn = get_db()
+    rows = conn.execute("""
+        SELECT city,
+               COUNT(*) as total,
+               SUM(CASE WHEN pnl_usd > 0 THEN 1 ELSE 0 END) as wins,
+               SUM(CASE WHEN pnl_usd <= 0 THEN 1 ELSE 0 END) as losses,
+               ROUND(SUM(pnl_usd), 2) as total_pnl
+        FROM trades
+        WHERE status = 'settled' AND city IS NOT NULL AND city != ''
+        GROUP BY city
+        ORDER BY total_pnl DESC
+    """).fetchall()
+    conn.close()
+    result = []
+    for r in rows:
+        city, total, wins, losses, total_pnl = r
+        result.append({
+            "city": city,
+            "total": total,
+            "wins": wins,
+            "losses": losses,
+            "win_rate": round(wins / total * 100, 1) if total > 0 else 0,
+            "total_pnl": total_pnl or 0,
+        })
+    return result
+
+
+def get_open_trades_with_current_prices(last_markets: list) -> list[dict]:
+    """Get open trades enriched with current market price for unrealized P&L."""
+    conn = get_db()
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT * FROM trades WHERE status = 'open' ORDER BY id DESC"
+    ).fetchall()
+    conn.close()
+
+    # Build a price lookup from last scan markets
+    price_lookup = {m["ticker"]: m for m in last_markets}
+
+    result = []
+    for row in rows:
+        trade = dict(row)
+        ticker = trade["ticker"]
+        current = price_lookup.get(ticker, {})
+
+        # Current market price for our side
+        if trade.get("side") == "yes":
+            current_price = current.get("yes_ask") or current.get("yes_bid")
+        else:
+            current_price = current.get("no_ask") or current.get("no_bid")
+
+        entry_price = trade.get("market_price", 0)
+        contracts = trade.get("contracts", 0)
+
+        if current_price and entry_price and contracts:
+            # Unrealized P&L = (current_price - entry_price) * contracts
+            unrealized_pnl = round((current_price - entry_price) * contracts, 2)
+        else:
+            unrealized_pnl = None
+
+        trade["current_price"] = current_price
+        trade["unrealized_pnl"] = unrealized_pnl
+        result.append(trade)
+    return result
 
 
 # Initialize DB on import

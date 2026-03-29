@@ -29,14 +29,16 @@ def kelly_size(win_prob: float, odds: float) -> float:
     return max(kelly, 0.0)
 
 
-def compute_position_size(win_prob: float, market_price: float, bankroll: float) -> float:
+def compute_position_size(win_prob: float, market_price: float, bankroll: float,
+                          days_to_expiry: int = 7) -> float:
     """
-    Compute dollar position size using fractional Kelly.
+    Compute dollar position size using fractional Kelly, scaled by days to expiry.
 
     Args:
         win_prob: Model's estimated probability of winning (0-1).
         market_price: Current market price as probability (0-1), i.e. cost per contract.
         bankroll: Current bankroll in dollars.
+        days_to_expiry: Days until market expires. Closer = smaller position.
 
     Returns:
         Dollar amount to bet.
@@ -50,6 +52,19 @@ def compute_position_size(win_prob: float, market_price: float, bankroll: float)
     fractional = raw_kelly * settings.kelly_fraction
 
     position = fractional * bankroll
+
+    # Scale down position for near-expiry markets where ensemble has less predictive value:
+    # 7+ days: full size | 3-6 days: 75% | 1-2 days: 50% | same day: 25%
+    if days_to_expiry <= 0:
+        expiry_scale = 0.25
+    elif days_to_expiry <= 2:
+        expiry_scale = 0.50
+    elif days_to_expiry <= 6:
+        expiry_scale = 0.75
+    else:
+        expiry_scale = 1.0
+
+    position = position * expiry_scale
     position = min(position, settings.max_trade_size)
     position = max(position, 0.0)
 
@@ -78,6 +93,12 @@ def evaluate_market(market: dict, forecast: dict, bankroll: float) -> dict | Non
     Returns:
         Trade signal dict, or None if no edge.
     """
+    from datetime import date as _date
+    try:
+        target = _date.fromisoformat(market.get("target_date", ""))
+        days_to_expiry = (target - _date.today()).days
+    except (ValueError, TypeError):
+        days_to_expiry = 7
     n_members = forecast.get("n_members", 0)
     if n_members < 40:
         return None  # Need substantial ensemble for reliable probability
@@ -109,7 +130,7 @@ def evaluate_market(market: dict, forecast: dict, bankroll: float) -> dict | Non
         if price < 0.05:
             return None
 
-        size = compute_position_size(model_prob, price, bankroll)
+        size = compute_position_size(model_prob, price, bankroll, days_to_expiry)
         if size <= 0:
             return None
         return {
@@ -128,6 +149,7 @@ def evaluate_market(market: dict, forecast: dict, bankroll: float) -> dict | Non
             "position_size_usd": size,
             "contracts": max(1, int(size / price)),
             "price_cents": int(price * 100),
+            "days_to_expiry": days_to_expiry,
             "forecast_mean": round(forecast["mean_high"], 1),
             "forecast_min": round(forecast["min_high"], 1),
             "forecast_max": round(forecast["max_high"], 1),
