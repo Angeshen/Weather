@@ -9,7 +9,7 @@ from pathlib import Path
 
 from src.config import settings
 from src.data.kalshi_client import KalshiClient
-from src.core.notifications import notify_trade, notify_risk_alert
+from src.core.notifications import notify_trade, notify_risk_alert, notify_early_exit, notify_order_error
 
 
 DB_PATH = Path(__file__).parent.parent.parent / "data" / "trades.db"
@@ -358,7 +358,6 @@ def exit_losing_positions(current_markets: list, client=None) -> list[dict]:
 
     Returns list of exited trades with realized P&L.
     """
-    from src.core.notifications import notify_risk_alert
     conn = get_db()
     conn.row_factory = sqlite3.Row
     open_trades = conn.execute(
@@ -408,7 +407,7 @@ def exit_losing_positions(current_markets: list, client=None) -> list[dict]:
                 sell_price_cents = int(current_bid * 100)
                 client.sell_order(ticker, side, contracts, sell_price_cents)
             except Exception as e:
-                notify_risk_alert(f"Exit order failed for {ticker}: {e}")
+                notify_order_error(f"Exit order failed for {ticker}: {e}")
                 continue
 
         # Mark as settled with loss in DB
@@ -424,11 +423,7 @@ def exit_losing_positions(current_markets: list, client=None) -> list[dict]:
         bankroll = get_current_bankroll() + realized_pnl
         log_bankroll(bankroll, f"Exited {ticker} early: {loss_pct*100:.0f}% loss")
 
-        notify_risk_alert(
-            f"⚡ Early exit: {ticker}\n"
-            f"Entry: {entry_price*100:.0f}¢ → Exit: {current_bid*100:.0f}¢\n"
-            f"Realized P&L: ${realized_pnl:+.2f} ({loss_pct*100:.0f}% loss cut)"
-        )
+        notify_early_exit(ticker, entry_price, current_bid, realized_pnl, loss_pct)
         exited.append({"ticker": ticker, "pnl": realized_pnl, "loss_pct": loss_pct})
 
     return exited

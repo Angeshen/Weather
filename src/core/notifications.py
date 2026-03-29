@@ -153,6 +153,24 @@ def notify_settlement(results: dict):
     _send_message("\n".join(lines))
 
 
+def notify_early_exit(ticker: str, entry_price: float, exit_price: float, realized_pnl: float, loss_pct: float):
+    """Send notification when bot auto-exits a losing position."""
+    text = (
+        f"⚡ <b>Early Exit</b>\n\n"
+        f"<b>{ticker}</b>\n"
+        f"Entry: {entry_price*100:.0f}¢ → Exit: {exit_price*100:.0f}¢\n"
+        f"📉 Loss cut: {loss_pct*100:.0f}%\n"
+        f"💰 Realized P&L: <b>${realized_pnl:+.2f}</b>"
+    )
+    _send_message(text)
+
+
+def notify_order_error(message: str):
+    """Send notification when a live order fails (technical error, not risk event)."""
+    text = f"🔧 <b>Order Error</b>\n\n{message}"
+    _send_message(text)
+
+
 def notify_blocked_signal(signal: dict, reason: str):
     """Alert when a high-edge signal is blocked by risk limits."""
     edge = signal.get("edge", 0)
