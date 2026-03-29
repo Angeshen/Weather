@@ -606,27 +606,47 @@ function renderSignals(signals) {
     $('signalsBody').innerHTML = html;
 }
 
-function renderMarkets(markets) {
+function renderMarkets(markets, signals) {
     $('marketCount').textContent = markets.length + ' markets';
     $('statMarkets').textContent = markets.length;
     if (!markets.length) {
         $('marketsBody').innerHTML = '<div class="empty-state"><div class="icon">&#127782;&#65039;</div><p>No open markets found</p></div>';
         return;
     }
-    let html = '<table><thead><tr><th>Ticker</th><th>City</th><th>Type</th><th>Date</th><th>Threshold</th><th>Yes Bid</th><th>Yes Ask</th><th>Spread</th><th>Volume</th><th>Liquidity</th></tr></thead><tbody>';
+    // Build signal lookup by ticker for cross-referencing
+    const sigMap = {};
+    for (const s of (signals || [])) sigMap[s.ticker] = s;
+
+    let html = '<table><thead><tr><th>Ticker</th><th>City</th><th>Type</th><th>Date</th><th>Threshold</th><th>Yes Bid</th><th>Yes Ask</th><th>Spread</th><th>Volume</th><th>Liquidity</th><th>Bot Status</th></tr></thead><tbody>';
     for (const m of markets) {
         const unit = m.unit || '\u00b0F';
         const typeLabel = {'high_temp':'High','low_temp':'Low','precipitation':'Rain'}[m.market_type] || '?';
-        // Liquidity check matching bot logic: volume >= 50, spread <= 15¢
         const vol = m.volume || 0;
         const yesBid = m.yes_bid || 0;
         const yesAsk = m.yes_ask || 0;
         const spreadCents = yesAsk && yesBid ? Math.round((yesAsk - yesBid) * 100) : null;
         const isLiquid = vol >= 50 && (spreadCents === null || spreadCents <= 15);
         const liqBadge = isLiquid
-            ? '<span class="liq-badge liq-ok">✓ OK</span>'
-            : `<span class="liq-badge liq-warn" title="Vol:${vol} Spread:${spreadCents}¢">⚠ Thin</span>`;
-        const spreadStr = spreadCents !== null ? spreadCents + '¢' : '—';
+            ? '<span class="liq-badge liq-ok">\u2713 OK</span>'
+            : `<span class="liq-badge liq-warn" title="Vol:${vol} Spread:${spreadCents}\u00a2">\u26a0 Thin</span>`;
+        const spreadStr = spreadCents !== null ? spreadCents + '\u00a2' : '\u2014';
+
+        // Bot status: show edge if signal exists, otherwise explain why skipped
+        let statusCell;
+        const sig = sigMap[m.ticker];
+        if (sig) {
+            const edgeClass = sig.edge >= 0.15 ? 'edge-high' : 'edge-medium';
+            const dirClass = sig.direction.includes('ABOVE') || sig.direction.includes('YES') ? 'dir-above' : 'dir-below';
+            statusCell = `<span class="${edgeClass}" title="Edge: ${pct(sig.edge)}">\u26a1 ${pct(sig.edge)} edge</span> <span class="${dirClass}" style="font-size:11px">${sig.direction}</span>`;
+        } else if (!isLiquid) {
+            const reason = vol < 50 ? `Vol ${vol} < 50` : `Spread ${spreadCents}\u00a2 > 15\u00a2`;
+            statusCell = `<span style="color:var(--text-dim);font-size:11px" title="${reason}">\u2014 Illiquid</span>`;
+        } else if (yesAsk > 0.65 && (1 - yesBid) > 0.65) {
+            statusCell = '<span style="color:var(--text-dim);font-size:11px" title="Both sides priced too high">\u2014 Price OOB</span>';
+        } else {
+            statusCell = '<span style="color:var(--text-dim);font-size:11px">\u2014 No edge</span>';
+        }
+
         html += `<tr>
             <td><code>${m.ticker}</code></td>
             <td>${m.city}</td>
@@ -638,6 +658,7 @@ function renderMarkets(markets) {
             <td style="font-size:11px;color:${spreadCents > 15 ? 'var(--red)' : 'var(--text-dim)'}">${spreadStr}</td>
             <td>${vol}</td>
             <td>${liqBadge}</td>
+            <td>${statusCell}</td>
         </tr>`;
     }
     html += '</tbody></table>';
@@ -750,7 +771,7 @@ async function manualScan() {
             renderSignals(result.signals);
 
             const markets = await api('/api/markets');
-            renderMarkets(markets);
+            renderMarkets(markets, result.signals);
         }
         await refreshStats();
         await refreshStatus();
@@ -775,10 +796,9 @@ async function startBot() {
                 await refreshStats();
                 await refreshStatus();
                 await refreshTrades();
-                const signals = await api('/api/signals');
+                const [signals, markets] = await Promise.all([api('/api/signals'), api('/api/markets')]);
                 renderSignals(signals);
-                const markets = await api('/api/markets');
-                renderMarkets(markets);
+                renderMarkets(markets, signals);
             }, 15000);
         }
     } catch(e) {
