@@ -125,18 +125,13 @@ def settle_open_trades() -> dict:
         if not city_info:
             continue
 
-        # Prefer official Kalshi resolution value (exact NWS number used to settle)
+        # Only settle using Kalshi's official expiration_value (exact NWS number).
+        # Never fall back to Open-Meteo — it can have unfinalized same-day data
+        # which causes premature incorrect settlements.
         actual = fetch_kalshi_resolution(ticker)
 
-        # Fall back to Open-Meteo historical archive if Kalshi hasn't resolved yet
         if actual is None:
-            actual = fetch_actual_weather(
-                city_info["lat"], city_info["lon"],
-                trade["target_date"], market_type
-            )
-
-        if actual is None:
-            continue  # Data not yet available
+            continue  # Kalshi hasn't resolved yet — try again next scan
 
         threshold = trade["threshold_f"]
         direction = trade.get("direction", "").upper()
