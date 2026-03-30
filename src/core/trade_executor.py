@@ -385,11 +385,23 @@ def exit_losing_positions(current_markets: list, client=None) -> list[dict]:
         if not entry_price or not contracts or not cost:
             continue
 
-        # Current bid price (what we can sell at)
+        # Skip exit check for trades entered less than 5 minutes ago —
+        # bids may not exist yet and would trigger a false immediate exit
+        try:
+            from datetime import datetime, timezone
+            entered_at = datetime.fromisoformat(trade["timestamp"])
+            age_seconds = (datetime.now(timezone.utc) - entered_at).total_seconds()
+            if age_seconds < 300:
+                continue
+        except Exception:
+            pass
+
+        # Current bid price (what we can sell at) — use bid only, never ask
+        # If no bid exists we cannot exit, so skip
         if side == "yes":
-            current_bid = market.get("yes_bid") or market.get("yes_ask", 0)
+            current_bid = market.get("yes_bid") or 0
         else:
-            current_bid = market.get("no_bid") or market.get("no_ask", 0)
+            current_bid = market.get("no_bid") or 0
 
         if not current_bid:
             continue
