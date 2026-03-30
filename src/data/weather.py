@@ -84,40 +84,48 @@ def _fetch_ecmwf_ensemble(lat: float, lon: float, target_date: str,
             if not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
                 return []
 
-            ds = xr.open_dataset(out_path, engine="cfgrib",
-                                 backend_kwargs={"indexpath": ""})
-
-            # Find nearest grid point
-            lats = ds.latitude.values
-            lons_raw = ds.longitude.values
-            # ECMWF uses 0-360 longitude
+            # Use tight bounding box (±1° around city) to avoid loading global grid
             lon_360 = lon % 360
-            lat_idx = int(np.argmin(np.abs(lats - lat)))
-            lon_idx = int(np.argmin(np.abs(lons_raw - lon_360)))
+            bbox = {
+                "latitude": slice(lat + 1.0, lat - 1.0),
+                "longitude": slice(lon_360 - 1.0, lon_360 + 1.0),
+            }
 
-            # Extract all members for this location
-            # ds has dims: number (member), step, latitude, longitude
-            temps_k = ds["t2m"].values  # shape: (members, steps, lat, lon) or similar
+            datasets = cfgrib.open_datasets(
+                out_path,
+                indexpath="",
+                filter_by_keys={"typeOfLevel": "heightAboveGround", "level": 2},
+            )
 
             values = []
-            if temps_k.ndim == 4:
-                member_temps = temps_k[:, :, lat_idx, lon_idx]  # (members, steps)
-            elif temps_k.ndim == 3:
-                member_temps = temps_k[:, lat_idx, lon_idx]  # (steps, lat, lon) — control
-                member_temps = member_temps[np.newaxis, :]
-            else:
-                return []
+            for ds in datasets:
+                if "t2m" not in ds:
+                    ds.close()
+                    continue
+                # Subset to bounding box
+                sub = ds.sel(bbox)
+                temps_k = sub["t2m"].values  # shape varies: (member, step, lat, lon) or subset
 
-            for member_steps in member_temps:
-                temps_f = [_celsius_to_fahrenheit(t - 273.15) for t in member_steps]
-                if market_type == "high_temp":
-                    values.append(max(temps_f))
-                elif market_type == "low_temp":
-                    values.append(min(temps_f))
-                else:
-                    values.append(sum(temps_f))  # precipitation sum approximation
+                # Flatten to (members, steps) — squeeze out single-point lat/lon
+                if temps_k.ndim == 4:
+                    # (member, step, lat, lon) -> pick nearest point
+                    temps_k = temps_k[:, :, 0, 0]
+                elif temps_k.ndim == 3:
+                    temps_k = temps_k[:, 0, 0]
+                    temps_k = temps_k[:, np.newaxis]  # (member, 1)
+                elif temps_k.ndim == 2:
+                    temps_k = temps_k[np.newaxis, :]  # treat as 1 member
 
-            ds.close()
+                for member_steps in temps_k:
+                    temps_f = [_celsius_to_fahrenheit(float(t) - 273.15) for t in member_steps]
+                    if market_type == "high_temp":
+                        values.append(max(temps_f))
+                    elif market_type == "low_temp":
+                        values.append(min(temps_f))
+                    else:
+                        values.append(sum(temps_f))
+                ds.close()
+
             return values
 
     except Exception as e:
