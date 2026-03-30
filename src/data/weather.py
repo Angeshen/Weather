@@ -71,9 +71,11 @@ def _fetch_ecmwf_ensemble(lat: float, lon: float, target_date: str,
         with tempfile.TemporaryDirectory() as tmpdir:
             out_path = os.path.join(tmpdir, "ecmwf_ens.grib2")
 
-            client = Client(source="ecmwf", model="ifs", resol="0p25")
+            client = Client(source="ecmwf")
             client.retrieve(
-                type="enfo",
+                model="ifs",
+                stream="enfo",
+                type="pf",  # perturbed forecast members (50 members)
                 param=ecmwf_param,
                 step=list(range(step_start, step_end + 1, 6)),
                 target=out_path,
