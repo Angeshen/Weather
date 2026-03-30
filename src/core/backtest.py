@@ -142,9 +142,8 @@ def run_backtest(days: int = 30) -> dict:
             # This means the model will sometimes be wrong, producing real losses.
             err_seed = (hash(f"model_err_{series}_{date_str}") % 10000) / 10000.0
             # Map uniform [0,1] → normal via Box-Muller approximation
-            import math as _m
             u = max(err_seed, 1e-9)
-            z = _m.sqrt(-2 * _m.log(u)) * _m.cos(2 * _m.pi * ((hash(f"bm2_{series}_{date_str}") % 10000) / 10000.0))
+            z = math.sqrt(-2 * math.log(u)) * math.cos(2 * math.pi * ((hash(f"bm2_{series}_{date_str}") % 10000) / 10000.0))
             forecast_center = actual + z * rmse   # model's day-1 forecast (independent of actual)
 
             ensemble = _simulate_ensemble(forecast_center, 0.0, rmse * 0.6, n=50)

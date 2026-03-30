@@ -146,16 +146,16 @@ def settle_open_trades() -> dict:
             won = not actual_above
 
         # Calculate P&L
-        # You paid `cost` dollars at `market_price` per contract.
-        # On a win each contract pays $1, so profit = cost * (1 - market_price) / market_price.
-        # On a loss you lose your entire stake.
+        # Each contract pays $1 on a win. You paid `cost` total for `contracts` contracts.
+        # Win: profit = contracts * $1 - cost
+        # Loss: lose entire stake = -cost
         cost = trade["position_size_usd"]
-        market_price = trade.get("market_price", 0.5)
+        contracts = trade.get("contracts") or 0
         if won:
-            pnl = round(cost * (1.0 - market_price) / max(market_price, 0.01), 2)
+            pnl = round(contracts * 1.0 - cost, 2)
             wins += 1
         else:
-            pnl = -cost
+            pnl = round(-cost, 2)
             losses += 1
 
         pnl = round(pnl, 2)
