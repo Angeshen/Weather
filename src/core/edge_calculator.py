@@ -86,7 +86,7 @@ def _is_liquid(market: dict) -> bool:
     Check if a market has enough liquidity to trade safely.
     Wide spreads mean we'd pay too much slippage; low volume means poor fills.
     """
-    volume = market.get("volume", 0) or 0
+    volume = float(market.get("volume", 0) or 0)
     yes_bid = market.get("yes_bid") or 0
     yes_ask = market.get("yes_ask") or 0
     no_bid = market.get("no_bid") or 0
