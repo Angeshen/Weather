@@ -183,7 +183,7 @@ def evaluate_market(market: dict, forecast: dict, bankroll: float) -> dict | Non
             "edge": round(calculate_edge(model_prob, price), 4),
             "confidence": round(confidence, 4),
             "position_size_usd": size,
-            "contracts": max(1, int(size / price)),
+            "contracts": max(1, min(int(size / price), int(settings.max_trade_size / max(price, 0.01)))),
             "price_cents": int(price * 100),
             "days_to_expiry": days_to_expiry,
             "forecast_mean": round(forecast["mean_high"], 1),
