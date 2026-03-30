@@ -394,6 +394,21 @@ async function refreshStatus() {
             const d = new Date(status.last_scan);
             $('lastScan').textContent = 'Last scan: ' + d.toLocaleTimeString();
         }
+        // Error banner
+        const errs = status.last_errors || [];
+        let banner = $('errorBanner');
+        if (errs.length > 0) {
+            if (!banner) {
+                banner = document.createElement('div');
+                banner.id = 'errorBanner';
+                banner.style.cssText = 'background:var(--red);color:#fff;padding:8px 16px;font-size:12px;display:flex;justify-content:space-between;align-items:center;gap:8px;';
+                document.querySelector('.header').after(banner);
+            }
+            banner.innerHTML = `<span>⚠️ Scan errors on last run (${errs.length} markets failed): ${errs[0]}${errs.length > 1 ? ` (+${errs.length-1} more)` : ''}</span><button onclick="this.parentElement.style.display='none'" style="background:none;border:1px solid #fff;color:#fff;padding:2px 8px;border-radius:4px;cursor:pointer">✕</button>`;
+            banner.style.display = 'flex';
+        } else if (banner) {
+            banner.style.display = 'none';
+        }
         // Scan mode indicator
         const badge = $('scanModeBadge');
         const countdown = $('gfsCountdown');

@@ -64,6 +64,7 @@ bot_state = {
     "last_markets": [],
     "scan_count": 0,
     "confidence_history": {},  # ticker -> list of (timestamp, confidence) tuples
+    "last_errors": [],  # recent forecast/scan errors for dashboard display
 }
 
 
@@ -88,6 +89,7 @@ def run_scan():
     signals = []
 
     fetched_at = datetime.now(timezone.utc).isoformat()
+    scan_errors = []
     for market in markets:
         try:
             forecast = get_forecast_for_city(
@@ -96,14 +98,27 @@ def run_scan():
                 threshold=market["threshold_f"],
             )
             if forecast.get("error"):
+                msg = f"Forecast error {market['ticker']}: {forecast['error']}"
+                print(f"[forecast] {msg}")
+                scan_errors.append(msg)
                 continue
 
             signal = evaluate_market(market, forecast, bankroll)
             if signal:
                 signal["forecast_fetched_at"] = fetched_at
                 signals.append(signal)
-        except Exception:
+        except Exception as e:
+            import traceback
+            msg = f"Exception evaluating {market.get('ticker','?')}: {e}"
+            print(f"[scan error] {msg}")
+            print(traceback.format_exc())
+            scan_errors.append(msg)
             continue
+
+    if scan_errors:
+        bot_state["last_errors"] = scan_errors
+    elif not scan_errors:
+        bot_state["last_errors"] = []
 
     signals.sort(key=lambda s: s["edge"], reverse=True)
 
@@ -307,12 +322,14 @@ def api_status():
     next_window_mins = min(next_00z, next_12z) if not in_model_window else 0
     return jsonify({
         "running": bot_state["running"],
+        "is_paused": is_paused(),
         "mode": settings.trading_mode,
         "last_scan": bot_state["last_scan"],
         "scan_count": bot_state["scan_count"],
         "scan_interval": settings.scan_interval_seconds,
         "in_model_window": in_model_window,
         "next_model_run_mins": int(next_window_mins),
+        "last_errors": bot_state.get("last_errors", []),
     })
 
 
