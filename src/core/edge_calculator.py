@@ -92,17 +92,17 @@ def _is_liquid(market: dict) -> bool:
     no_bid = market.get("no_bid") or 0
     no_ask = market.get("no_ask") or 0
 
-    if volume < settings.min_liquidity_volume:
+    if volume < int(settings.min_liquidity_volume):
         return False
 
     # Check spread on whichever side has quotes
     if yes_bid and yes_ask:
         spread = int(yes_ask * 100) - int(yes_bid * 100)
-        if spread > settings.max_spread_cents:
+        if spread > int(settings.max_spread_cents):
             return False
     if no_bid and no_ask:
         spread = int(no_ask * 100) - int(no_bid * 100)
-        if spread > settings.max_spread_cents:
+        if spread > int(settings.max_spread_cents):
             return False
 
     return True
@@ -139,11 +139,11 @@ def evaluate_market(market: dict, forecast: dict, bankroll: float) -> dict | Non
     confidence = forecast["confidence"]
 
     # Trade when ensemble strongly agrees (configurable threshold)
-    if confidence < settings.min_confidence_threshold:
+    if confidence < float(settings.min_confidence_threshold):
         return None
 
     # Skip markets too far out — GFS accuracy degrades fast beyond 2 days
-    if days_to_expiry > settings.max_days_to_expiry:
+    if days_to_expiry > int(settings.max_days_to_expiry):
         return None
     market_type = market.get("market_type", "high_temp")
     unit = market.get("unit", "°F")
