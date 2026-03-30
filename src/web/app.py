@@ -563,7 +563,8 @@ def api_debug_forecast():
                 "error": forecast.get("error"),
             })
         except Exception as e:
-            results.append({"ticker": market["ticker"], "error": str(e)})
+            import traceback
+            results.append({"ticker": market["ticker"], "error": str(e), "traceback": traceback.format_exc()})
     return jsonify(results)
 
 
