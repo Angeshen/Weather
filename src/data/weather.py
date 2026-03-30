@@ -1,234 +1,107 @@
 """
-Fetch ECMWF ENS 51-member ensemble forecasts directly from ECMWF Open Data.
-Free, CC-BY licensed, no rate limits. Same 51-member ENS data that Open-Meteo
-charges $99/month to proxy.
+Multi-model ensemble forecast using Open-Meteo free forecast API.
 
-Falls back to NOAA GFS ensemble (nomads.ncep.noaa.gov) if ECMWF is unavailable.
+Fetches 5 deterministic NWP models (GFS, ECMWF, ICON, GEM, MeteoFrance),
+then generates 10 perturbed members per model using realistic RMSE to build
+a 50-member pseudo-ensemble. Free, fast, no rate limits.
 
-Public interface is unchanged: get_forecast_for_city / compute_threshold_probability.
+For live trading upgrade path: subscribe to Open-Meteo $99/month plan
+and set OPEN_METEO_API_KEY in .env to get true 51-member ECMWF ENS.
+
+Public interface: get_forecast_for_city / compute_threshold_probability.
 """
 
-import os
-import time
-import tempfile
 import math
-from datetime import datetime, timezone, timedelta, date as _date
+import time
+from datetime import date as _date
 
 import httpx
 from src.config import CITY_CONFIG
 
-# In-memory forecast cache — ECMWF ENS updates every 12h (00Z and 12Z)
+# In-memory forecast cache — NWP models update every 6-12h
 # Key: (series_ticker, target_date, threshold), Value: (fetched_timestamp, result)
 _forecast_cache: dict = {}
-_CACHE_TTL_SECONDS = 6 * 3600  # 6 hours — safe margin within 12h update cycle
+_CACHE_TTL_SECONDS = 6 * 3600  # 6 hours
 
-# NOAA GFS ensemble fallback URL template
-# NOMADS serves GFS 0.5° ensemble (GEFS) — 30 members + control = 31 total
-_NOMADS_BASE = "https://nomads.ncep.noaa.gov/cgi-bin/filter_gefs_atmos_0p50a.pl"
+_FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 
+_MODELS = [
+    "gfs_seamless",
+    "ecmwf_ifs025",
+    "icon_seamless",
+    "gem_seamless",
+    "meteofrance_seamless",
+]
 
-def _celsius_to_fahrenheit(c: float) -> float:
-    return c * 9 / 5 + 32
+_VARIABLE_MAP = {
+    "high_temp": "temperature_2m_max",
+    "low_temp": "temperature_2m_min",
+    "precipitation": "precipitation_sum",
+}
 
-
-def _fetch_ecmwf_ensemble(lat: float, lon: float, target_date: str,
-                          market_type: str = "high_temp") -> list[float]:
-    """
-    Fetch ECMWF ENS 51-member ensemble forecast directly from ECMWF Open Data.
-
-    Uses the ecmwf-opendata Python client to download the latest ENS run,
-    then extracts hourly 2m temperature for the nearest grid point and
-    computes the daily max/min across the target date.
-
-    Returns list of per-member daily values in °F (or inches for precip).
-    Empty list if unavailable.
-    """
-    try:
-        from ecmwf.opendata import Client
-        import cfgrib
-        import xarray as xr
-        import numpy as np
-    except ImportError:
-        return []
-
-    try:
-        target = _date.fromisoformat(target_date)
-        today = _date.today()
-        days_ahead = (target - today).days
-
-        if days_ahead < 0 or days_ahead > 7:
-            return []
-
-        # ECMWF step in hours from model run to target date midday
-        # Use 00Z run, step = days_ahead * 24 + 12 (noon local approx)
-        # We want hourly steps spanning the full target date: steps 0..+48
-        # For daily max temp, request step range covering target date hours
-        step_start = max(0, days_ahead * 24)
-        step_end = step_start + 24
-
-        ecmwf_param = "2t"  # 2m temperature (Kelvin)
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            out_path = os.path.join(tmpdir, "ecmwf_ens.grib2")
-
-            client = Client(source="ecmwf")
-            client.retrieve(
-                model="ifs",
-                stream="enfo",
-                type="pf",  # perturbed forecast members (50 members)
-                param=ecmwf_param,
-                step=list(range(step_start, step_end + 1, 6)),
-                target=out_path,
-            )
-
-            if not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
-                return []
-
-            # Use tight bounding box (±1° around city) to avoid loading global grid
-            lon_360 = lon % 360
-            bbox = {
-                "latitude": slice(lat + 1.0, lat - 1.0),
-                "longitude": slice(lon_360 - 1.0, lon_360 + 1.0),
-            }
-
-            datasets = cfgrib.open_datasets(
-                out_path,
-                indexpath="",
-                filter_by_keys={"typeOfLevel": "heightAboveGround", "level": 2},
-            )
-
-            values = []
-            for ds in datasets:
-                if "t2m" not in ds:
-                    ds.close()
-                    continue
-                # Subset to bounding box
-                sub = ds.sel(bbox)
-                temps_k = sub["t2m"].values  # shape varies: (member, step, lat, lon) or subset
-
-                # Flatten to (members, steps) — squeeze out single-point lat/lon
-                if temps_k.ndim == 4:
-                    # (member, step, lat, lon) -> pick nearest point
-                    temps_k = temps_k[:, :, 0, 0]
-                elif temps_k.ndim == 3:
-                    temps_k = temps_k[:, 0, 0]
-                    temps_k = temps_k[:, np.newaxis]  # (member, 1)
-                elif temps_k.ndim == 2:
-                    temps_k = temps_k[np.newaxis, :]  # treat as 1 member
-
-                for member_steps in temps_k:
-                    temps_f = [_celsius_to_fahrenheit(float(t) - 273.15) for t in member_steps]
-                    if market_type == "high_temp":
-                        values.append(max(temps_f))
-                    elif market_type == "low_temp":
-                        values.append(min(temps_f))
-                    else:
-                        values.append(sum(temps_f))
-                ds.close()
-
-            return values
-
-    except Exception as e:
-        print(f"[ecmwf] Fetch failed: {e}")
-        return []
-
-
-def _fetch_gfs_ensemble_nomads(lat: float, lon: float, target_date: str,
-                               market_type: str = "high_temp") -> list[float]:
-    """
-    Fallback: fetch NOAA GEFS (GFS ensemble) from NOMADS via simple HTTP API.
-    Returns 21-member ensemble daily max/min temp in °F.
-    Uses the open-meteo free forecast API to get multi-model deterministic
-    forecasts as a lightweight fallback proxy.
-    """
-    try:
-        target = _date.fromisoformat(target_date)
-        today = _date.today()
-        days_ahead = (target - today).days
-        if days_ahead < 0 or days_ahead > 7:
-            return []
-
-        # Use Open-Meteo free forecast API (NOT ensemble API) with multiple
-        # deterministic models to build a pseudo-ensemble via perturbation
-        url = "https://api.open-meteo.com/v1/forecast"
-        variable = "temperature_2m_max" if market_type == "high_temp" else \
-                   "temperature_2m_min" if market_type == "low_temp" else \
-                   "precipitation_sum"
-
-        models = ["gfs_seamless", "ecmwf_ifs025", "icon_seamless",
-                  "gem_seamless", "meteofrance_seamless"]
-        deterministic_values = []
-
-        for model in models:
-            try:
-                params = {
-                    "latitude": lat,
-                    "longitude": lon,
-                    "daily": variable,
-                    "start_date": target_date,
-                    "end_date": target_date,
-                    "temperature_unit": "fahrenheit",
-                    "models": model,
-                    "timezone": "America/New_York",
-                }
-                with httpx.Client(timeout=15.0) as client:
-                    resp = client.get(url, params=params, timeout=15.0)
-                    if resp.status_code != 200:
-                        continue
-                    data = resp.json()
-                    vals = data.get("daily", {}).get(variable, [])
-                    if vals and vals[0] is not None:
-                        deterministic_values.append(float(vals[0]))
-            except Exception:
-                continue
-
-        if not deterministic_values:
-            return []
-
-        # Build pseudo-ensemble: perturb each deterministic value with
-        # realistic GFS day-1/day-2 RMSE to simulate ensemble spread
-        # Day-1 RMSE ~2.5°F, Day-2 ~4.0°F
-        rmse = 2.5 if days_ahead <= 1 else 4.0
-        rng_seed = hash(f"{lat:.2f}_{lon:.2f}_{target_date}")
-        pseudo_ensemble = []
-
-        for base_val in deterministic_values:
-            # Generate 10 perturbed members per model using Box-Muller
-            for i in range(10):
-                seed1 = (hash(f"{rng_seed}_{base_val:.2f}_a_{i}") % 100000) / 100000.0
-                seed2 = (hash(f"{rng_seed}_{base_val:.2f}_b_{i}") % 100000) / 100000.0
-                u1 = max(seed1, 1e-9)
-                u2 = max(seed2, 1e-9)
-                z = math.sqrt(-2 * math.log(u1)) * math.cos(2 * math.pi * u2)
-                pseudo_ensemble.append(base_val + z * rmse)
-
-        return pseudo_ensemble
-
-    except Exception as e:
-        print(f"[gfs_fallback] Fetch failed: {e}")
-        return []
+# Realistic NWP RMSE by forecast horizon (°F)
+_RMSE_DAY1 = 2.5
+_RMSE_DAY2 = 4.0
+_MEMBERS_PER_MODEL = 10
 
 
 def fetch_ensemble_forecast(lat: float, lon: float, target_date: str,
                             market_type: str = "high_temp") -> list[float]:
     """
-    Fetch ensemble forecast. Tries ECMWF ENS first (51 members, gold standard),
-    falls back to GFS multi-model pseudo-ensemble if ECMWF is unavailable.
+    Build a 50-member pseudo-ensemble from 5 deterministic NWP models.
 
-    Returns list of per-member daily values in °F (or inches for precip).
+    Each model's forecast is perturbed with realistic RMSE-scaled noise
+    using a deterministic Box-Muller transform (reproducible per city+date).
+
+    Returns list of 50 pseudo-member daily values in °F (or inches for precip).
     """
-    # Try ECMWF ENS first
-    values = _fetch_ecmwf_ensemble(lat, lon, target_date, market_type)
-    if values:
-        print(f"[ecmwf] Got {len(values)} members for {target_date} at ({lat:.2f}, {lon:.2f})")
-        return values
+    try:
+        target = _date.fromisoformat(target_date)
+        days_ahead = (target - _date.today()).days
+        if days_ahead < 0 or days_ahead > 7:
+            return []
+    except (ValueError, TypeError):
+        return []
 
-    # Fallback to GFS multi-model pseudo-ensemble
-    print(f"[ecmwf] Unavailable, falling back to GFS multi-model for {target_date}")
-    values = _fetch_gfs_ensemble_nomads(lat, lon, target_date, market_type)
-    if values:
-        print(f"[gfs_fallback] Got {len(values)} pseudo-members for {target_date}")
-    return values
+    variable = _VARIABLE_MAP.get(market_type, "temperature_2m_max")
+    rmse = _RMSE_DAY1 if days_ahead <= 1 else _RMSE_DAY2
+    rng_seed = hash(f"{lat:.2f}_{lon:.2f}_{target_date}")
+
+    deterministic_values = []
+    for model in _MODELS:
+        try:
+            params = {
+                "latitude": lat,
+                "longitude": lon,
+                "daily": variable,
+                "start_date": target_date,
+                "end_date": target_date,
+                "temperature_unit": "fahrenheit",
+                "models": model,
+                "timezone": "America/New_York",
+            }
+            with httpx.Client(timeout=15.0) as client:
+                resp = client.get(_FORECAST_URL, params=params)
+                if resp.status_code != 200:
+                    continue
+                vals = resp.json().get("daily", {}).get(variable, [])
+                if vals and vals[0] is not None:
+                    deterministic_values.append(float(vals[0]))
+        except Exception:
+            continue
+
+    if not deterministic_values:
+        return []
+
+    pseudo_ensemble = []
+    for base_val in deterministic_values:
+        for i in range(_MEMBERS_PER_MODEL):
+            s1 = max((hash(f"{rng_seed}_{base_val:.2f}_a{i}") % 100000) / 100000.0, 1e-9)
+            s2 = max((hash(f"{rng_seed}_{base_val:.2f}_b{i}") % 100000) / 100000.0, 1e-9)
+            z = math.sqrt(-2 * math.log(s1)) * math.cos(2 * math.pi * s2)
+            pseudo_ensemble.append(base_val + z * rmse)
+
+    return pseudo_ensemble
 
 
 def compute_threshold_probability(ensemble_values: list[float], threshold: float,
