@@ -102,6 +102,11 @@ def run_scan():
                 print(f"[forecast] {msg}")
                 scan_errors.append(msg)
                 continue
+            if forecast.get("n_members", 0) == 0:
+                msg = f"No forecast data for {market['ticker']} (API rate limit or outage?)"
+                print(f"[forecast] {msg}")
+                scan_errors.append(msg)
+                continue
 
             signal = evaluate_market(market, forecast, bankroll)
             if signal:
