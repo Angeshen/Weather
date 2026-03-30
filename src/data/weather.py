@@ -6,8 +6,14 @@ Fetch 31-member GFS ensemble forecasts from Open-Meteo for:
 Compute probability of thresholds being exceeded.
 """
 
+import time
 import httpx
-from src.config import CITY_CONFIG
+from src.config import CITY_CONFIG, settings
+
+# In-memory forecast cache — GFS updates every 6h, no need to re-fetch more often
+# Key: (series_ticker, target_date, threshold), Value: (timestamp, result)
+_forecast_cache: dict = {}
+_CACHE_TTL_SECONDS = 6 * 3600  # 6 hours
 
 
 OPEN_METEO_ENSEMBLE_URL = "https://ensemble-api.open-meteo.com/v1/ensemble"
@@ -73,6 +79,9 @@ def _fetch_single_model(lat: float, lon: float, target_date: str,
         params["temperature_unit"] = "fahrenheit"
     if market_type == "precipitation":
         params["precipitation_unit"] = "inch"
+    api_key = getattr(settings, "open_meteo_api_key", "")
+    if api_key:
+        params["apikey"] = api_key
 
     with httpx.Client(timeout=20.0) as client:
         resp = client.get(OPEN_METEO_ENSEMBLE_URL, params=params)
@@ -149,7 +158,8 @@ def compute_threshold_probability(ensemble_values: list[float], threshold: float
     }
 
 
-def get_forecast_for_city(series_ticker: str, target_date: str, threshold: float) -> dict:
+def get_forecast_for_city(series_ticker: str, target_date: str, threshold: float,
+                         cache_ttl: int = _CACHE_TTL_SECONDS) -> dict:
     """
     Full pipeline: fetch ensemble for a city and compute threshold probability.
 
@@ -164,6 +174,14 @@ def get_forecast_for_city(series_ticker: str, target_date: str, threshold: float
     city = CITY_CONFIG.get(series_ticker)
     if not city:
         return {"error": f"Unknown series ticker: {series_ticker}"}
+
+    # Check cache — GFS only updates every 6h, no need to re-fetch on every scan
+    cache_key = (series_ticker, target_date, threshold)
+    cached = _forecast_cache.get(cache_key)
+    if cached:
+        cached_at, cached_result = cached
+        if time.time() - cached_at < cache_ttl:
+            return cached_result
 
     market_type = city.get("market_type", "high_temp")
 
@@ -182,5 +200,9 @@ def get_forecast_for_city(series_ticker: str, target_date: str, threshold: float
     analysis["min_high"] = analysis["min_val"]
     analysis["max_high"] = analysis["max_val"]
     analysis["threshold_f"] = threshold
+
+    # Store in cache only if we got real data (n_members > 0)
+    if analysis.get("n_members", 0) > 0:
+        _forecast_cache[cache_key] = (time.time(), analysis)
 
     return analysis
