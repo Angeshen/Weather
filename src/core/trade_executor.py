@@ -4,7 +4,7 @@ Handles order placement, tracking, and daily P&L.
 """
 
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 from src.config import settings
@@ -130,10 +130,22 @@ def get_open_trade_count() -> int:
 
 
 def is_ticker_already_open(ticker: str) -> bool:
-    """Return True if there's already an open trade for this exact ticker."""
+    """Return True if there's already an open trade for this exact ticker,
+    or if it was early-exited within the last hour (re-entry cooldown)."""
     conn = get_db()
+    # Check open trades
     row = conn.execute(
         "SELECT COUNT(*) FROM trades WHERE status = 'open' AND ticker = ?", (ticker,)
+    ).fetchone()
+    if (row[0] if row else 0) > 0:
+        conn.close()
+        return True
+    # Check if early-exited (settled with loss) within the last 60 minutes
+    one_hour_ago = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    row = conn.execute(
+        "SELECT COUNT(*) FROM trades WHERE ticker = ? AND status = 'settled' "
+        "AND pnl_usd < 0 AND settled_at > ?",
+        (ticker, one_hour_ago)
     ).fetchone()
     conn.close()
     return (row[0] if row else 0) > 0
@@ -385,13 +397,13 @@ def exit_losing_positions(current_markets: list, client=None) -> list[dict]:
         if not entry_price or not contracts or not cost:
             continue
 
-        # Skip exit check for trades entered less than 5 minutes ago —
-        # bids may not exist yet and would trigger a false immediate exit
+        # Skip exit check for trades entered less than 15 minutes ago
         try:
-            from datetime import datetime, timezone
             entered_at = datetime.fromisoformat(trade["timestamp"])
+            if entered_at.tzinfo is None:
+                entered_at = entered_at.replace(tzinfo=timezone.utc)
             age_seconds = (datetime.now(timezone.utc) - entered_at).total_seconds()
-            if age_seconds < 300:
+            if age_seconds < 900:
                 continue
         except Exception:
             pass
