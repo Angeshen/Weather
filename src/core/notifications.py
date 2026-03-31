@@ -268,6 +268,229 @@ def notify_weekly_summary(stats: dict):
     _send_message(text)
 
 
+_last_no_markets_alert: float = 0
+
+def notify_no_markets(scan_count: int = 0):
+    """Alert when the market scanner returns 0 markets — may indicate API issue. Max once/hour."""
+    import time
+    global _last_no_markets_alert
+    now = time.time()
+    if now - _last_no_markets_alert < 3600:
+        return
+    _last_no_markets_alert = now
+    text = (
+        f"⚠️ <b>No Markets Found</b>\n\n"
+        f"Scanner returned 0 markets (scan #{scan_count}).\n"
+        f"Kalshi API may be down or all series are inactive."
+    )
+    _send_message(text)
+
+
+def notify_daily_loss_limit(daily_loss: float, limit: float):
+    """Alert when daily loss limit is hit and bot stops trading."""
+    text = (
+        f"🛑 <b>Daily Loss Limit Hit</b>\n\n"
+        f"Lost <b>${abs(daily_loss):,.2f}</b> today (limit: ${limit:,.2f})\n"
+        f"Bot will not open new trades until tomorrow.\n"
+        f"Use /resume after midnight to re-enable manually."
+    )
+    _send_message(text)
+
+
+def notify_cooldown_block(ticker: str, city: str, minutes_remaining: float, signal_edge: float):
+    """Alert when a signal is blocked by the 1-hour re-entry cooldown."""
+    text = (
+        f"⏳ <b>Re-entry Blocked (Cooldown)</b>\n\n"
+        f"<b>{city}</b> — <code>{ticker}</code>\n"
+        f"Signal edge: {signal_edge*100:.1f}% — but cooldown active\n"
+        f"⏱ {minutes_remaining:.0f} min remaining before re-entry allowed"
+    )
+    _send_message(text)
+
+
+def notify_grace_period_skip(ticker: str, city: str, age_minutes: float, loss_pct: float):
+    """Log when a trade is shielded from early exit by the grace period."""
+    text = (
+        f"🛡️ <b>Grace Period Active</b>\n\n"
+        f"<b>{city}</b> — <code>{ticker}</code>\n"
+        f"Current loss: {loss_pct*100:.0f}% — but trade is only {age_minutes:.0f} min old\n"
+        f"Early exit skipped (15-min grace period in effect)"
+    )
+    _send_message(text)
+
+
+def notify_settlement_pending(open_trades: list):
+    """Morning alert listing open trades that expire today and need to settle."""
+    if not open_trades:
+        return
+    from datetime import date
+    today = date.today().isoformat()
+    expiring = [t for t in open_trades if t.get("target_date") == today]
+    if not expiring:
+        return
+    lines = [f"📅 <b>{len(expiring)} Trade(s) Expiring Today</b>\n"]
+    for t in expiring:
+        contracts = t.get("contracts", 0)
+        cost = t.get("position_size_usd", 0)
+        win_target = round(contracts * 1.0 - cost, 2) if contracts and cost else 0
+        entry_c = int(t.get("market_price", 0) * 100)
+        lines.append(
+            f"• <b>{t.get('city','?')}</b> {t.get('direction','?')} @ {entry_c}¢\n"
+            f"  {contracts} contracts — win: 🏆${win_target:,.2f}"
+        )
+    _send_message("\n".join(lines))
+
+
+_peak_bankroll: float = 0
+_last_drawdown_alert: float = 0
+
+def notify_drawdown(current: float, peak: float, drawdown_pct: float):
+    """Alert when bankroll drops 10%+ from its peak. Max once per 6 hours."""
+    import time
+    global _last_drawdown_alert
+    now = time.time()
+    if now - _last_drawdown_alert < 21600:
+        return
+    _last_drawdown_alert = now
+    text = (
+        f"📉 <b>Drawdown Alert</b>\n\n"
+        f"Bankroll: <b>${current:,.2f}</b> (peak: ${peak:,.2f})\n"
+        f"Drawdown: <b>{drawdown_pct:.1f}%</b> from high water mark\n"
+        f"Down ${peak - current:,.2f} from peak"
+    )
+    _send_message(text)
+
+
+def check_and_notify_drawdown(current_bankroll: float):
+    """Call each scan to track peak bankroll and fire drawdown alert at 10%."""
+    global _peak_bankroll
+    if current_bankroll > _peak_bankroll:
+        _peak_bankroll = current_bankroll
+    if _peak_bankroll > 0:
+        drawdown_pct = (_peak_bankroll - current_bankroll) / _peak_bankroll * 100
+        if drawdown_pct >= 10.0:
+            notify_drawdown(current_bankroll, _peak_bankroll, drawdown_pct)
+
+
+_last_streak_notified: int = 0
+
+def notify_streak_milestone(streak: int, stats: dict):
+    """Alert on win/loss streak milestones (every 3rd in a row)."""
+    global _last_streak_notified
+    if streak == _last_streak_notified:
+        return
+    if abs(streak) < 3 or abs(streak) % 3 != 0:
+        return
+    _last_streak_notified = streak
+    bankroll = stats.get("bankroll", 0)
+    pnl = stats.get("total_pnl", 0)
+    if streak > 0:
+        text = (
+            f"🔥 <b>{streak}-Win Streak!</b>\n\n"
+            f"Bankroll: <b>${bankroll:,.2f}</b>\n"
+            f"All-time P&L: ${pnl:+,.2f}\n"
+            f"Win rate: {stats.get('win_rate', 0):.1f}%"
+        )
+    else:
+        text = (
+            f"❄️ <b>{abs(streak)}-Loss Streak</b>\n\n"
+            f"Bankroll: <b>${bankroll:,.2f}</b>\n"
+            f"All-time P&L: ${pnl:+,.2f}\n"
+            f"Consider reviewing edge thresholds."
+        )
+    _send_message(text)
+
+
+_last_heartbeat_check: float = 0
+_last_scan_seen: str = ""
+
+def check_scan_heartbeat(last_scan: str, interval_seconds: int = 1800):
+    """Alert if the bot hasn't scanned in >30 minutes (silent crash detector)."""
+    import time
+    global _last_heartbeat_check, _last_scan_seen
+    now = time.time()
+    if now - _last_heartbeat_check < 600:
+        return
+    _last_heartbeat_check = now
+    if not last_scan or last_scan == _last_scan_seen:
+        return
+    _last_scan_seen = last_scan
+    # Check age of last scan
+    try:
+        from datetime import datetime, timezone
+        ls = datetime.fromisoformat(last_scan)
+        if ls.tzinfo is None:
+            ls = ls.replace(tzinfo=timezone.utc)
+        age_s = (datetime.now(timezone.utc) - ls).total_seconds()
+        if age_s > interval_seconds:
+            _send_message(
+                f"💤 <b>Scan Heartbeat Missing</b>\n\n"
+                f"Last scan was <b>{age_s/60:.0f} min ago</b>.\n"
+                f"Bot may have crashed silently — check the server."
+            )
+    except Exception:
+        pass
+
+
+_last_gfs_notified: str = ""
+
+def notify_gfs_model_run():
+    """Notify when a fresh GFS model run is available (~00Z and ~12Z UTC)."""
+    global _last_gfs_notified
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    run_label = f"{now.strftime('%Y-%m-%d')}-{'00Z' if now.hour < 12 else '12Z'}"
+    if run_label == _last_gfs_notified:
+        return
+    # Only fire within the first 30 min of the run window
+    mins_into_window = now.hour % 12 * 60 + now.minute
+    if mins_into_window > 30:
+        return
+    _last_gfs_notified = run_label
+    _send_message(
+        f"🌐 <b>Fresh GFS Model Run Available</b>\n\n"
+        f"Run: <b>{run_label}</b>\n"
+        f"Forecast data will refresh on next scan — edge may shift."
+    )
+
+
+_last_price_move_alert: dict = {}
+
+def notify_price_move(ticker: str, city: str, side: str, entry_price: float,
+                      current_price: float, move_pct: float):
+    """Alert when an open position moves >20% against us in a single scan."""
+    import time
+    now = time.time()
+    if now - _last_price_move_alert.get(ticker, 0) < 1800:
+        return
+    _last_price_move_alert[ticker] = now
+    direction = "against you ⬇️" if move_pct < 0 else "in your favor ⬆️"
+    text = (
+        f"📊 <b>Price Movement Alert</b>\n\n"
+        f"<b>{city}</b> — <code>{ticker}</code>\n"
+        f"Entry: {entry_price*100:.0f}¢ → Now: {current_price*100:.0f}¢\n"
+        f"Move: <b>{move_pct*100:+.1f}%</b> {direction}"
+    )
+    _send_message(text)
+
+
+def notify_big_win(trade: dict, pnl: float, threshold: float = 200.0):
+    """Celebrate a big win when single trade profit exceeds threshold."""
+    if pnl < threshold:
+        return
+    contracts = trade.get("contracts", 0)
+    cost = trade.get("position_size_usd", 0)
+    entry_c = int(trade.get("market_price", 0) * 100)
+    text = (
+        f"🎉 <b>Big Win!</b>\n\n"
+        f"<b>{trade.get('city','?')}</b> — <code>{trade.get('ticker','?')}</code>\n"
+        f"{trade.get('side','yes').upper()} @ {entry_c}¢ | {contracts} contracts\n"
+        f"💰 Profit: <b>${pnl:+,.2f}</b>\n"
+        f"ROI: {pnl/cost*100:.0f}% on ${cost:.2f} staked"
+    )
+    _send_message(text)
+
+
 def test_notification() -> bool:
     """Send a test message to verify Telegram is configured."""
     return _send_message("✅ <b>Kalshi Weather Bot</b> — Telegram notifications working!")

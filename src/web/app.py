@@ -43,6 +43,13 @@ from src.core.notifications import (
     notify_morning_ping,
     notify_confidence_spike,
     notify_weekly_summary,
+    notify_no_markets,
+    notify_settlement_pending,
+    check_and_notify_drawdown,
+    notify_streak_milestone,
+    notify_gfs_model_run,
+    notify_big_win,
+    check_scan_heartbeat,
     test_notification,
 )
 from src.core.settlement import settle_open_trades
@@ -207,9 +214,36 @@ def bot_loop():
 
             clean_markets = [{k: v for k, v in m.items() if k != "raw_market"} for m in markets]
 
+            # Alert if scanner found no markets at all
+            if not markets:
+                try:
+                    notify_no_markets(bot_state.get("scan_count", 0))
+                except Exception:
+                    pass
+
+            # Drawdown alert (tracks peak bankroll, fires at 10% drawdown)
+            try:
+                check_and_notify_drawdown(bankroll)
+            except Exception:
+                pass
+
+            # GFS model run alert (~00Z and ~12Z UTC)
+            try:
+                notify_gfs_model_run()
+            except Exception:
+                pass
+
             # Morning liveness ping (once per day)
             try:
                 notify_morning_ping(len(markets), get_open_trade_count(), bankroll, get_stats())
+            except Exception:
+                pass
+
+            # Settlement pending alert — trades expiring today
+            try:
+                from src.core.trade_executor import get_trade_history
+                open_trades_list = [t for t in get_trade_history(50) if t.get("status") == "open"]
+                notify_settlement_pending(open_trades_list)
             except Exception:
                 pass
 
@@ -240,6 +274,15 @@ def bot_loop():
                 settle_results = settle_open_trades()
                 if settle_results.get("settled", 0) > 0:
                     notify_settlement(settle_results)
+                    # Big win celebration + streak milestone
+                    for r in settle_results.get("results", []):
+                        if r.get("pnl", 0) > 0:
+                            notify_big_win(r, r["pnl"])
+                    try:
+                        _stats = get_stats()
+                        notify_streak_milestone(_stats.get("win_streak", 0), _stats)
+                    except Exception:
+                        pass
             except Exception:
                 pass
 
@@ -284,6 +327,12 @@ def bot_loop():
             bot_state["last_markets"] = clean_markets
             bot_state["scan_count"] += 1
 
+        except Exception:
+            pass
+
+        # Heartbeat check — runs every loop iteration even if scan fails
+        try:
+            check_scan_heartbeat(bot_state.get("last_scan", ""))
         except Exception:
             pass
 

@@ -9,7 +9,9 @@ from pathlib import Path
 
 from src.config import settings
 from src.data.kalshi_client import KalshiClient
-from src.core.notifications import notify_trade, notify_risk_alert, notify_early_exit, notify_order_error
+from src.core.notifications import (notify_trade, notify_risk_alert, notify_early_exit,
+    notify_order_error, notify_daily_loss_limit, notify_cooldown_block, notify_grace_period_skip,
+    notify_price_move)
 
 
 DB_PATH = Path(__file__).parent.parent.parent / "data" / "trades.db"
@@ -129,9 +131,9 @@ def get_open_trade_count() -> int:
     return row[0] if row else 0
 
 
-def is_ticker_already_open(ticker: str) -> bool:
-    """Return True if there's already an open trade for this exact ticker,
-    or if it was early-exited within the last hour (re-entry cooldown)."""
+def is_ticker_already_open(ticker: str) -> tuple[bool, str]:
+    """Return (True, reason) if ticker is blocked, (False, '') if clear.
+    Blocks if: open trade exists, or early-exited within the last hour."""
     conn = get_db()
     # Check open trades
     row = conn.execute(
@@ -139,16 +141,26 @@ def is_ticker_already_open(ticker: str) -> bool:
     ).fetchone()
     if (row[0] if row else 0) > 0:
         conn.close()
-        return True
+        return True, "open"
     # Check if early-exited (settled with loss) within the last 60 minutes
     one_hour_ago = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
     row = conn.execute(
-        "SELECT COUNT(*) FROM trades WHERE ticker = ? AND status = 'settled' "
-        "AND pnl_usd < 0 AND settled_at > ?",
+        "SELECT id, settled_at FROM trades WHERE ticker = ? AND status = 'settled' "
+        "AND pnl_usd < 0 AND settled_at > ? ORDER BY id DESC LIMIT 1",
         (ticker, one_hour_ago)
     ).fetchone()
     conn.close()
-    return (row[0] if row else 0) > 0
+    if row:
+        try:
+            settled_at = datetime.fromisoformat(row[1])
+            if settled_at.tzinfo is None:
+                settled_at = settled_at.replace(tzinfo=timezone.utc)
+            elapsed = (datetime.now(timezone.utc) - settled_at).total_seconds()
+            remaining_min = max(0, (3600 - elapsed) / 60)
+        except Exception:
+            remaining_min = 60
+        return True, f"cooldown:{remaining_min:.0f}"
+    return False, ""
 
 
 def get_open_trade_count_for_city(city: str) -> int:
@@ -277,10 +289,19 @@ def execute_trade(signal: dict, client: KalshiClient = None) -> dict:
     """Route to paper or live execution based on config."""
     can_trade, reason = check_risk_limits()
     if not can_trade:
-        notify_risk_alert(reason)
+        if "Daily loss limit" in reason:
+            daily_pnl = get_daily_loss_today()
+            notify_daily_loss_limit(daily_pnl, settings.daily_loss_limit)
+        else:
+            notify_risk_alert(reason)
         return {"status": "blocked", "reason": reason}
 
-    if is_ticker_already_open(signal["ticker"]):
+    blocked, block_reason = is_ticker_already_open(signal["ticker"])
+    if blocked:
+        if block_reason.startswith("cooldown:"):
+            remaining = float(block_reason.split(":")[1])
+            notify_cooldown_block(signal["ticker"], signal.get("city", ""), remaining, signal.get("edge", 0))
+            return {"status": "blocked", "reason": f"Cooldown active on {signal['ticker']} ({remaining:.0f} min remaining)"}
         return {"status": "blocked", "reason": f"Already have open trade on {signal['ticker']}"}
 
     city = signal.get("city", "")
@@ -410,6 +431,15 @@ def exit_losing_positions(current_markets: list, client=None) -> list[dict]:
         except Exception:
             age_seconds = 0  # If parsing fails, assume new trade — skip exit
         if age_seconds < 900:
+            # Notify if the trade would have been exited but is protected
+            current_bid_check = market.get("yes_bid") if trade.get("side") == "yes" else market.get("no_bid")
+            if current_bid_check and cost:
+                tentative_loss = (cost - current_bid_check * contracts) / cost
+                if tentative_loss >= settings.exit_loss_threshold:
+                    try:
+                        notify_grace_period_skip(ticker, trade.get("city", ""), age_seconds / 60, tentative_loss)
+                    except Exception:
+                        pass
             continue
 
         # Current bid price (what we can sell at) — use bid only, never ask
@@ -425,6 +455,14 @@ def exit_losing_positions(current_markets: list, client=None) -> list[dict]:
         # Value if we sell now vs entry cost
         current_value = current_bid * contracts
         loss_pct = (cost - current_value) / cost if cost > 0 else 0
+
+        # Price movement alert — significant move but not yet at exit threshold
+        move_pct = (current_bid - entry_price) / entry_price if entry_price > 0 else 0
+        if abs(move_pct) >= 0.20:
+            try:
+                notify_price_move(ticker, trade.get("city", ""), side, entry_price, current_bid, move_pct)
+            except Exception:
+                pass
 
         if loss_pct < _exit_loss_threshold():
             continue  # Position is fine, hold
