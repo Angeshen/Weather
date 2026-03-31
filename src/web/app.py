@@ -243,11 +243,12 @@ def bot_loop():
             except Exception:
                 pass
 
-            # Exit positions that have lost 20%+ of value
-            try:
-                exit_losing_positions(clean_markets, client)
-            except Exception:
-                pass
+            # Exit positions that have lost threshold% of value (live only — paper trades settle automatically)
+            if settings.trading_mode == "live":
+                try:
+                    exit_losing_positions(clean_markets, client)
+                except Exception:
+                    pass
 
             # Weekly summary — every Sunday at daily summary time
             try:
