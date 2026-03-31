@@ -397,6 +397,10 @@ def exit_losing_positions(current_markets: list, client=None) -> list[dict]:
         if not entry_price or not contracts or not cost:
             continue
 
+        # Skip early exit for penny contracts — bid/ask spread is noise on illiquid markets
+        if entry_price < 0.05:
+            continue
+
         # Skip exit check for trades entered less than 15 minutes ago
         try:
             entered_at = datetime.fromisoformat(trade["timestamp"])
