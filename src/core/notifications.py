@@ -34,27 +34,29 @@ def notify_trade(signal: dict, result: dict):
     """Send a notification when a trade is placed."""
     mode = result.get("mode", "paper").upper()
     trade_id = result.get("trade_id", "?")
-    status = result.get("status", "?")
 
     unit = signal.get("unit", "°F")
     market_type = signal.get("market_type", "high_temp")
     type_label = {"high_temp": "High Temp", "low_temp": "Low Temp", "precipitation": "Rain"}.get(market_type, market_type)
+    contracts = signal.get('contracts', 0)
+    cost = signal.get('position_size_usd', 0)
+    win_target = round(contracts * 1.0 - cost, 2) if contracts and cost else 0
+    days = signal.get('days_to_expiry', '?')
+    days_str = f"same-day" if days == 0 else f"{days}d"
+    entry_c = int(signal['market_price'] * 100)
 
     text = (
-        f"🔔 <b>Trade Placed</b> [{mode}]\n"
+        f"🔔 <b>Trade Placed</b> [{mode}] #{trade_id}\n"
         f"\n"
-        f"<b>{signal['city']}</b> — {type_label}\n"
-        f"📅 {signal['target_date']}\n"
-        f"🎯 Threshold: {signal['threshold_f']}{unit}\n"
-        f"📊 Direction: <b>{signal['direction']}</b>\n"
+        f"<b>{signal['city']}</b> — {type_label} — {signal['target_date']} ({days_str})\n"
+        f"🎯 Threshold: {signal['threshold_f']}{unit} | Direction: <b>{signal['direction']}</b>\n"
         f"\n"
-        f"Model: {signal['model_prob']*100:.1f}%  vs  Market: {signal['market_price']*100:.1f}%\n"
-        f"⚡ Edge: <b>{signal['edge']*100:.1f}%</b>\n"
-        f"💰 Size: <b>${signal['position_size_usd']:.2f}</b> ({signal['contracts']} contracts)\n"
-        f"🌡️ Forecast: {signal.get('forecast_mean', '?')}{unit} "
-        f"({signal.get('forecast_min', '?')}-{signal.get('forecast_max', '?')})\n"
-        f"\n"
-        f"Trade #{trade_id} — {status}"
+        f"Model: {signal['model_prob']*100:.1f}%  vs  Market: {entry_c}¢\n"
+        f"⚡ Edge: <b>{signal['edge']*100:.1f}%</b> | Confidence: {signal.get('confidence', 0)*100:.1f}%\n"
+        f"💰 {contracts} contracts × {entry_c}¢ = <b>${cost:.2f}</b>\n"
+        f"🏆 Win target: <b>${win_target:,.2f}</b>\n"
+        f"🌡️ Forecast: {signal.get('forecast_mean', '?')}{unit} ({signal.get('forecast_min', '?')}–{signal.get('forecast_max', '?')})\n"
+        f"👥 Ensemble: {signal.get('n_members', '?')} members, {signal.get('n_above', '?')} above threshold"
     )
     _send_message(text)
 
@@ -121,11 +123,12 @@ def notify_risk_alert(message: str):
     _send_message(text)
 
 
-def notify_bot_status(status: str):
+def notify_bot_status(status: str, bankroll: float = 0):
     """Send bot start/stop notifications."""
     emoji = "🟢" if status == "started" else "🔴"
     mode = settings.trading_mode.upper()
-    text = f"{emoji} <b>Bot {status.upper()}</b> — Mode: {mode}"
+    bankroll_str = f"\n💰 Bankroll: <b>${bankroll:,.2f}</b>" if bankroll and status == "started" else ""
+    text = f"{emoji} <b>Bot {status.upper()}</b> — Mode: {mode}{bankroll_str}"
     _send_message(text)
 
 
@@ -143,24 +146,29 @@ def notify_settlement(results: dict):
     lines = [f"{pnl_emoji} <b>{settled} Trade(s) Settled</b>\n"]
     for r in results.get("results", []):
         outcome = "✅ WON" if r["won"] else "❌ LOST"
+        side_str = r.get('side', 'yes').upper()
         lines.append(
-            f"  {r['city']} {r['target_date']} — "
-            f"Actual: {r['actual']}{r['unit']} vs {r['threshold']}{r['unit']} "
-            f"→ {outcome} (${r['pnl']:+.2f})"
+            f"  {outcome} <b>{r['city']}</b> {r['target_date']}\n"
+            f"  {side_str} — Actual: <b>{r['actual']}{r['unit']}</b> vs threshold {r['threshold']}{r['unit']}\n"
+            f"  P&L: <b>${r['pnl']:+.2f}</b>"
         )
 
-    lines.append(f"\nTotal P&L: <b>${pnl:+.2f}</b>  |  W/L: {wins}/{losses}")
+    lines.append(f"\nBatch P&L: <b>${pnl:+.2f}</b>  |  W/L this batch: {wins}/{losses}")
     _send_message("\n".join(lines))
 
 
-def notify_early_exit(ticker: str, entry_price: float, exit_price: float, realized_pnl: float, loss_pct: float):
+def notify_early_exit(ticker: str, entry_price: float, exit_price: float, realized_pnl: float, loss_pct: float,
+                      city: str = "", contracts: int = 0, cost: float = 0):
     """Send notification when bot auto-exits a losing position."""
+    city_str = f"<b>{city}</b> — " if city else ""
+    contracts_str = f"{contracts} contracts × {exit_price*100:.0f}¢" if contracts else ""
     text = (
         f"⚡ <b>Early Exit</b>\n\n"
-        f"<b>{ticker}</b>\n"
+        f"{city_str}<code>{ticker}</code>\n"
         f"Entry: {entry_price*100:.0f}¢ → Exit: {exit_price*100:.0f}¢\n"
-        f"📉 Loss cut: {loss_pct*100:.0f}%\n"
-        f"💰 Realized P&L: <b>${realized_pnl:+.2f}</b>"
+        f"📉 Loss: {loss_pct*100:.0f}% of position\n"
+        f"💰 Realized P&L: <b>${realized_pnl:+.2f}</b> (staked ${cost:.2f})\n"
+        f"{contracts_str}"
     )
     _send_message(text)
 
@@ -191,7 +199,7 @@ def notify_blocked_signal(signal: dict, reason: str):
 _morning_ping_sent_date: str = ""
 MORNING_PING_HOUR = 8   # 8am local server time
 
-def notify_morning_ping(markets_count: int, open_trades: int, bankroll: float):
+def notify_morning_ping(markets_count: int, open_trades: int, bankroll: float, stats: dict = None):
     """Send a morning liveness ping at 8am local time once per day."""
     global _morning_ping_sent_date
     from datetime import datetime, date
@@ -202,11 +210,18 @@ def notify_morning_ping(markets_count: int, open_trades: int, bankroll: float):
     if now.hour != MORNING_PING_HOUR:
         return  # Not 8am yet
     _morning_ping_sent_date = today
+    mode = settings.trading_mode.upper()
+    stats = stats or {}
+    pnl = stats.get('total_pnl', 0)
+    win_rate = stats.get('win_rate', 0)
+    settled = stats.get('settled_trades', 0)
+    pnl_str = f"${pnl:+,.2f}" if pnl != 0 else "$0.00"
     text = (
-        f"☀️ <b>Good Morning!</b>\n\n"
+        f"☀️ <b>Good Morning!</b> [{mode}]\n\n"
         f"💰 Bankroll: <b>${bankroll:,.2f}</b>\n"
+        f"📊 All-time P&L: <b>{pnl_str}</b> | Win rate: {win_rate:.1f}%\n"
         f"📡 Watching <b>{markets_count}</b> markets\n"
-        f"📂 Open positions: <b>{open_trades}</b>"
+        f"📂 Open positions: <b>{open_trades}</b> | Settled: {settled}"
     )
     _send_message(text)
 

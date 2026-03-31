@@ -453,7 +453,8 @@ def exit_losing_positions(current_markets: list, client=None) -> list[dict]:
         bankroll = get_current_bankroll() + realized_pnl
         log_bankroll(bankroll, f"Exited {ticker} early: {loss_pct*100:.0f}% loss")
 
-        notify_early_exit(ticker, entry_price, current_bid, realized_pnl, loss_pct)
+        notify_early_exit(ticker, entry_price, current_bid, realized_pnl, loss_pct,
+                          city=trade.get("city", ""), contracts=contracts, cost=cost)
         exited.append({"ticker": ticker, "pnl": realized_pnl, "loss_pct": loss_pct})
 
     return exited
@@ -523,6 +524,9 @@ def get_open_trades_with_current_prices(last_markets: list) -> list[dict]:
 
         trade["current_price"] = current_price
         trade["unrealized_pnl"] = unrealized_pnl
+        trade["volume"] = current.get("volume")
+        trade["yes_bid"] = current.get("yes_bid")
+        trade["yes_ask"] = current.get("yes_ask")
         result.append(trade)
     return result
 

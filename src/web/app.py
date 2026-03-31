@@ -209,7 +209,7 @@ def bot_loop():
 
             # Morning liveness ping (once per day)
             try:
-                notify_morning_ping(len(markets), get_open_trade_count(), bankroll)
+                notify_morning_ping(len(markets), get_open_trade_count(), bankroll, get_stats())
             except Exception:
                 pass
 
@@ -382,7 +382,7 @@ def api_bot_start():
     bot_state["running"] = True
     bot_state["thread"] = threading.Thread(target=bot_loop, daemon=True)
     bot_state["thread"].start()
-    notify_bot_status("started")
+    notify_bot_status("started", bankroll=get_current_bankroll())
     return jsonify({"status": "started"})
 
 

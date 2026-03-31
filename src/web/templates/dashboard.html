@@ -436,7 +436,7 @@ async function refreshOpenPositions(openTrades) {
     }
     countEl.textContent = openTrades.length + ' open';
     let totalUnrealized = 0;
-    let html = '<table><thead><tr><th>Ticker</th><th>City</th><th>Dir</th><th>Entry</th><th>Current</th><th>Contracts</th><th>Cost</th><th>Unrealized</th><th>Target</th><th>Age</th></tr></thead><tbody>';
+    let html = '<table><thead><tr><th>Ticker</th><th>City</th><th>Dir</th><th>Entry</th><th>Current</th><th>Contracts</th><th>Cost</th><th>Unrealized</th><th>Target</th><th>Volume</th><th>Age</th></tr></thead><tbody>';
     for (const t of openTrades) {
         const unreal = t.unrealized_pnl;
         if (unreal != null) totalUnrealized += unreal;
@@ -456,8 +456,9 @@ async function refreshOpenPositions(openTrades) {
         const target = (t.contracts && t.position_size_usd)
             ? `<span class="pnl-pos">+${usd(t.contracts - t.position_size_usd)}</span>`
             : '—';
+        const volStr = t.volume != null ? Number(t.volume).toLocaleString() : '—';
         html += `<tr>
-            <td><code style="font-size:11px">${t.ticker||'?'}</code></td>
+            <td><code style="font-size:11px;cursor:pointer;color:var(--cyan);text-decoration:underline;text-decoration-style:dotted" onclick="goToMarket('${t.ticker||''}')" title="Jump to Markets tab">${t.ticker||'?'}</code></td>
             <td>${t.city||'?'}</td>
             <td class="${dirClass}">${(t.side||'').toUpperCase()}</td>
             <td style="color:var(--text-dim)">${entryPct}</td>
@@ -466,6 +467,7 @@ async function refreshOpenPositions(openTrades) {
             <td>${t.position_size_usd ? usd(t.position_size_usd) : '—'}</td>
             <td>${unrealStr}</td>
             <td>${target}</td>
+            <td style="color:var(--text-dim);font-size:11px">${volStr}</td>
             <td style="color:var(--text-dim);font-size:11px">${age}</td>
         </tr>`;
     }
@@ -687,7 +689,7 @@ function renderMarkets(markets, signals) {
             statusCell = '<span style="color:var(--text-dim);font-size:11px">\u2014 No edge</span>';
         }
 
-        html += `<tr>
+        html += `<tr id="market-row-${m.ticker}">
             <td><code>${m.ticker}</code></td>
             <td>${m.city}</td>
             <td>${typeLabel}</td>
@@ -703,6 +705,20 @@ function renderMarkets(markets, signals) {
     }
     html += '</tbody></table>';
     $('marketsBody').innerHTML = html;
+}
+
+function goToMarket(ticker) {
+    // Switch to Markets tab and highlight the matching row
+    const marketsBtn = document.querySelector('.tab-btn:nth-child(3)');
+    switchTab('markets', marketsBtn);
+    setTimeout(() => {
+        const row = document.getElementById('market-row-' + ticker);
+        if (!row) return;
+        row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        row.style.transition = 'background 0.3s';
+        row.style.background = 'rgba(108,92,231,0.3)';
+        setTimeout(() => { row.style.background = ''; }, 2000);
+    }, 50);
 }
 
 function switchTab(name, btn) {

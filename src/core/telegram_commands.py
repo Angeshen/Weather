@@ -69,9 +69,10 @@ def _handle_command(text: str, chat_id: str, bot_state: dict):
     if cmd == "/help":
         _send(
             "🤖 <b>Kalshi Bot Commands</b>\n\n"
-            "/status — Bankroll, open trades, last scan time\n"
-            "/scan — Trigger a manual scan right now\n"
-            "/trades — List all open positions\n"
+            "/status — Bankroll, mode, win rate, last scan\n"
+            "/trades — Open positions with edge, age, win target\n"
+            "/pnl — Today's P&L and running totals\n"
+            "/scan — Trigger a manual scan + show signals\n"
             "/pause — Stop bot from opening new trades\n"
             "/resume — Re-enable trade execution\n"
             "/help — Show this message",
@@ -79,27 +80,33 @@ def _handle_command(text: str, chat_id: str, bot_state: dict):
         )
 
     elif cmd == "/status":
-        from src.core.trade_executor import get_stats, get_open_trade_count
+        from src.core.trade_executor import get_stats, get_daily_loss_today
+        from src.config import settings
         stats = get_stats()
         running = bot_state.get("running", False)
         last_scan = bot_state.get("last_scan", "never")
         scan_count = bot_state.get("scan_count", 0)
-        paused_str = " — <b>⏸ PAUSED</b>" if _trading_paused else ""
+        last_errors = bot_state.get("last_errors", [])
+        paused_str = " ⏸ PAUSED" if _trading_paused else ""
         status_emoji = "🟢" if running else "🔴"
+        mode = settings.trading_mode.upper()
+        daily_pnl = get_daily_loss_today()
+        daily_emoji = "📈" if daily_pnl >= 0 else "📉"
+        error_str = f"\n⚠️ Last error: <i>{last_errors[-1][:80]}</i>" if last_errors else ""
         _send(
-            f"{status_emoji} <b>Bot Status</b>{paused_str}\n\n"
+            f"{status_emoji} <b>Bot Status</b> [{mode}]{paused_str}\n\n"
             f"💰 Bankroll: <b>${stats['bankroll']:,.2f}</b>\n"
-            f"📊 All-time P&amp;L: <b>${stats['total_pnl']:+,.2f}</b>\n"
-            f"🎯 Win Rate: {stats['win_rate']:.1f}%\n\n"
-            f"Open trades: {stats['open_trades']}\n"
-            f"Settled: {stats['settled_trades']} (W:{stats['wins']} L:{stats['losses']})\n"
-            f"Scans: {scan_count}\n"
-            f"Last scan: {str(last_scan)[:19] if last_scan else 'never'}",
+            f"{daily_emoji} Today's P&L: <b>${daily_pnl:+,.2f}</b>\n"
+            f"📊 All-time P&L: <b>${stats['total_pnl']:+,.2f}</b>\n"
+            f"🎯 Win Rate: {stats['win_rate']:.1f}% ({stats['wins']}W / {stats['losses']}L)\n\n"
+            f"📂 Open: {stats['open_trades']} | Settled: {stats['settled_trades']}\n"
+            f"📡 Scans: {scan_count} | Last: {str(last_scan)[:19] if last_scan else 'never'}"
+            f"{error_str}",
             chat_id,
         )
 
     elif cmd == "/scan":
-        _send("📡 Triggering manual scan...", chat_id)
+        _send("📡 Scanning markets...", chat_id)
         try:
             from src.data.market_scanner import scan_weather_markets_public
             from src.data.weather import get_forecast_for_city
@@ -122,27 +129,69 @@ def _handle_command(text: str, chat_id: str, bot_state: dict):
                         signals.append(sig)
                 except Exception:
                     continue
-            _send(
-                f"✅ Scan complete\n"
-                f"Markets: {len(markets)} | Signals: <b>{len(signals)}</b>",
-                chat_id,
-            )
+            if not signals:
+                _send(f"✅ Scan complete — {len(markets)} markets, no signals", chat_id)
+            else:
+                lines = [f"✅ <b>Scan complete</b> — {len(markets)} markets, {len(signals)} signal(s)\n"]
+                for s in sorted(signals, key=lambda x: x.get('edge', 0), reverse=True):
+                    entry_c = int(s.get('market_price', 0) * 100)
+                    contracts = s.get('contracts', 0)
+                    cost = s.get('position_size_usd', 0)
+                    win_target = round(contracts * 1.0 - cost, 2) if contracts and cost else 0
+                    lines.append(
+                        f"⚡ <b>{s['city']}</b> {s['target_date']} — {s['direction']}\n"
+                        f"   Edge: <b>{s['edge']*100:.1f}%</b> | Conf: {s.get('confidence',0)*100:.1f}% | {entry_c}¢ × {contracts} = ${cost:.0f} → 🏆${win_target:,.0f}"
+                    )
+                _send("\n".join(lines), chat_id)
         except Exception as e:
             _send(f"❌ Scan failed: {e}", chat_id)
 
     elif cmd == "/trades":
         from src.core.trade_executor import get_trade_history
-        trades = [t for t in get_trade_history(20) if t.get("status") == "open"]
+        from datetime import datetime, timezone
+        trades = [t for t in get_trade_history(50) if t.get("status") == "open"]
         if not trades:
             _send("📂 No open trades right now.", chat_id)
             return
-        lines = [f"📂 <b>{len(trades)} Open Trade(s)</b>\n"]
+        lines = [f"📂 <b>{len(trades)} Open Position(s)</b>\n"]
         for t in trades:
+            entry_c = int(t.get('market_price', 0) * 100)
+            contracts = t.get('contracts', 0)
+            cost = t.get('position_size_usd', 0)
+            win_target = round(contracts * 1.0 - cost, 2) if contracts and cost else 0
+            edge = t.get('edge', 0)
+            # Age
+            age_str = "?"
+            try:
+                entered = datetime.fromisoformat(t['timestamp'])
+                if entered.tzinfo is None:
+                    entered = entered.replace(tzinfo=timezone.utc)
+                age_h = int((datetime.now(timezone.utc) - entered).total_seconds() / 3600)
+                age_str = f"{age_h}h"
+            except Exception:
+                pass
             lines.append(
-                f"• {t['ticker']} — {t['side'].upper()} @ {int(t.get('market_price',0)*100)}¢ "
-                f"| ${t.get('position_size_usd',0):.0f} | {t.get('contracts',0)} contracts"
+                f"• <b>{t.get('city','?')}</b> <code>{t['ticker']}</code>\n"
+                f"  {t['side'].upper()} @ {entry_c}¢ | ⚡{edge*100:.0f}% edge | age: {age_str}\n"
+                f"  {contracts} contracts × {entry_c}¢ = ${cost:.0f} → 🏆${win_target:,.2f}"
             )
         _send("\n".join(lines), chat_id)
+
+    elif cmd == "/pnl":
+        from src.core.trade_executor import get_stats, get_daily_loss_today
+        stats = get_stats()
+        daily_pnl = get_daily_loss_today()
+        daily_emoji = "📈" if daily_pnl >= 0 else "📉"
+        all_emoji = "📈" if stats['total_pnl'] >= 0 else "📉"
+        _send(
+            f"💰 <b>P&L Summary</b>\n\n"
+            f"{daily_emoji} Today: <b>${daily_pnl:+,.2f}</b>\n"
+            f"{all_emoji} All-time: <b>${stats['total_pnl']:+,.2f}</b>\n"
+            f"🎯 Win Rate: {stats['win_rate']:.1f}% ({stats['wins']}W / {stats['losses']}L)\n"
+            f"💵 Bankroll: <b>${stats['bankroll']:,.2f}</b>\n"
+            f"📂 Open positions: {stats['open_trades']}",
+            chat_id,
+        )
 
     elif cmd == "/pause":
         _trading_paused = True
