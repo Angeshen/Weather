@@ -407,10 +407,10 @@ def exit_losing_positions(current_markets: list, client=None) -> list[dict]:
             if entered_at.tzinfo is None:
                 entered_at = entered_at.replace(tzinfo=timezone.utc)
             age_seconds = (datetime.now(timezone.utc) - entered_at).total_seconds()
-            if age_seconds < 900:
-                continue
         except Exception:
-            pass
+            age_seconds = 0  # If parsing fails, assume new trade — skip exit
+        if age_seconds < 900:
+            continue
 
         # Current bid price (what we can sell at) — use bid only, never ask
         # If no bid exists we cannot exit, so skip
