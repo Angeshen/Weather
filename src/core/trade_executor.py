@@ -146,7 +146,8 @@ def get_daily_loss_today() -> float:
 def get_open_trade_count() -> int:
     conn = get_db()
     row = conn.execute(
-        "SELECT COUNT(*) FROM trades WHERE status = 'open'"
+        "SELECT COUNT(*) FROM trades WHERE status = 'open' AND mode = ?",
+        (settings.trading_mode,)
     ).fetchone()
     conn.close()
     return row[0] if row else 0
@@ -186,10 +187,11 @@ def is_ticker_already_open(ticker: str) -> tuple[bool, str]:
 
 
 def get_open_trade_count_for_city(city: str) -> int:
-    """Return number of open trades for a given city name."""
+    """Return number of open trades for a given city name, scoped to current trading mode."""
     conn = get_db()
     row = conn.execute(
-        "SELECT COUNT(*) FROM trades WHERE status = 'open' AND city = ?", (city,)
+        "SELECT COUNT(*) FROM trades WHERE status = 'open' AND city = ? AND mode = ?",
+        (city, settings.trading_mode)
     ).fetchone()
     conn.close()
     return row[0] if row else 0
