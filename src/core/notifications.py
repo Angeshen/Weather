@@ -511,6 +511,35 @@ def notify_big_win(trade: dict, pnl: float, threshold: float = 200.0):
     _send_message(text)
 
 
+def notify_fill_quality(ticker: str, city: str, requested_cents: int,
+                        filled_cents: int, requested_contracts: int, filled_contracts: int):
+    """Alert when live fill price or quantity differs significantly from signal."""
+    slip = filled_cents - requested_cents
+    fill_pct = filled_contracts / requested_contracts * 100 if requested_contracts else 0
+    slip_str = f"+{slip}¢ slippage" if slip > 0 else f"{slip}¢ slippage"
+    text = (
+        f"⚠️ <b>Fill Quality Alert</b>\n\n"
+        f"<b>{city}</b> — <code>{ticker}</code>\n"
+        f"Requested: {requested_cents}¢ × {requested_contracts:,} contracts\n"
+        f"Filled: {filled_cents}¢ × {filled_contracts:,} contracts ({fill_pct:.0f}% fill)\n"
+        f"{slip_str}"
+    )
+    _send_message(text)
+
+
+def notify_profit_exit(ticker: str, city: str, entry_cents: int, exit_cents: int,
+                       contracts: int, pnl: float, gain_pct: float):
+    """Alert when a trade is exited early on profit target."""
+    text = (
+        f"💰 <b>Profit Target Hit — Early Exit</b>\n\n"
+        f"<b>{city}</b> — <code>{ticker}</code>\n"
+        f"Entry: {entry_cents}¢ → Exit: {exit_cents}¢ | {contracts:,} contracts\n"
+        f"Locked in: <b>${pnl:+,.2f}</b> ({gain_pct:.0f}% of max payout)\n"
+        f"Exited before settlement to secure gains"
+    )
+    _send_message(text)
+
+
 def test_notification() -> bool:
     """Send a test message to verify Telegram is configured."""
     return _send_message("✅ <b>Kalshi Weather Bot</b> — Telegram notifications working!")

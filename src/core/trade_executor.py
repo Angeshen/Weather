@@ -48,7 +48,23 @@ def init_db():
             n_members INTEGER,
             n_above INTEGER,
             order_id TEXT,
-            note TEXT DEFAULT ''
+            note TEXT DEFAULT '',
+            actual_temp REAL,
+            filled_contracts INTEGER
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS forecast_accuracy (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            city TEXT NOT NULL,
+            target_date TEXT NOT NULL,
+            threshold_f REAL,
+            forecast_mean REAL,
+            actual_temp REAL,
+            error_f REAL,
+            side TEXT,
+            won INTEGER
         )
     """)
     conn.execute("""
@@ -68,11 +84,16 @@ def init_db():
             event TEXT
         )
     """)
-    # Migrate: add note column if missing (for existing DBs)
-    try:
-        conn.execute("SELECT note FROM trades LIMIT 1")
-    except sqlite3.OperationalError:
-        conn.execute("ALTER TABLE trades ADD COLUMN note TEXT DEFAULT ''")
+    # Migrate: add columns if missing (for existing DBs)
+    for col, definition in [
+        ("note", "TEXT DEFAULT ''"),
+        ("actual_temp", "REAL"),
+        ("filled_contracts", "INTEGER"),
+    ]:
+        try:
+            conn.execute(f"SELECT {col} FROM trades LIMIT 1")
+        except sqlite3.OperationalError:
+            conn.execute(f"ALTER TABLE trades ADD COLUMN {col} {definition}")
     conn.commit()
     conn.close()
 
@@ -237,7 +258,33 @@ def execute_live_trade(signal: dict, client: KalshiClient) -> dict:
             order_type="limit",
         )
 
-        order_id = result.get("order", {}).get("order_id", "unknown")
+        order = result.get("order", {})
+        order_id = order.get("order_id", "unknown")
+
+        # Partial fill tracking: actual filled qty may differ from requested
+        filled_contracts = order.get("filled_count") or order.get("quantity_filled")
+        if filled_contracts is not None:
+            filled_contracts = int(filled_contracts)
+        else:
+            filled_contracts = signal["contracts"]  # assume full fill if not reported
+
+        # Fill quality: detect price slippage
+        fill_price_cents = order.get("avg_price") or order.get("avg_fill_price")
+        if fill_price_cents and abs(int(fill_price_cents) - signal["price_cents"]) > 3:
+            try:
+                from src.core.notifications import notify_fill_quality
+                notify_fill_quality(
+                    ticker=signal["ticker"],
+                    city=signal["city"],
+                    requested_cents=signal["price_cents"],
+                    filled_cents=int(fill_price_cents),
+                    requested_contracts=signal["contracts"],
+                    filled_contracts=filled_contracts,
+                )
+            except Exception:
+                pass
+
+        actual_size = round(filled_contracts * signal["market_price"], 2)
 
         conn = get_db()
         cursor = conn.execute("""
@@ -246,8 +293,8 @@ def execute_live_trade(signal: dict, client: KalshiClient) -> dict:
                 side, direction, model_prob, market_price, edge, confidence,
                 contracts, price_cents, position_size_usd, mode, status,
                 forecast_mean, forecast_min, forecast_max, n_members, n_above,
-                order_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'live', 'open', ?, ?, ?, ?, ?, ?)
+                order_id, filled_contracts
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'live', 'open', ?, ?, ?, ?, ?, ?, ?)
         """, (
             datetime.now(timezone.utc).isoformat(),
             signal["ticker"],
@@ -260,24 +307,26 @@ def execute_live_trade(signal: dict, client: KalshiClient) -> dict:
             signal["market_price"],
             signal["edge"],
             signal["confidence"],
-            signal["contracts"],
+            filled_contracts,
             signal["price_cents"],
-            signal["position_size_usd"],
+            actual_size,
             signal.get("forecast_mean"),
             signal.get("forecast_min"),
             signal.get("forecast_max"),
             signal.get("n_members"),
             signal.get("n_above"),
             order_id,
+            filled_contracts,
         ))
         trade_id = cursor.lastrowid
         conn.commit()
         conn.close()
 
-        bankroll = get_current_bankroll() - signal["position_size_usd"]
-        log_bankroll(bankroll, f"Placed trade #{trade_id} on {signal['ticker']}")
+        bankroll = get_current_bankroll() - actual_size
+        log_bankroll(bankroll, f"Placed trade #{trade_id} on {signal['ticker']} ({filled_contracts}/{signal['contracts']} filled)")
 
-        result = {"trade_id": trade_id, "mode": "live", "order_id": order_id, "status": "open"}
+        result = {"trade_id": trade_id, "mode": "live", "order_id": order_id, "status": "open",
+                  "filled_contracts": filled_contracts, "requested_contracts": signal["contracts"]}
         notify_trade(signal, result)
         return result
 
@@ -464,10 +513,45 @@ def exit_losing_positions(current_markets: list, client=None) -> list[dict]:
             except Exception:
                 pass
 
+        # Profit target exit: if current bid >= 60% of $1 max payout, lock in gains
+        # Only on multi-day trades (age > 4 hours) to avoid churning same-day positions
+        max_payout_per_contract = 1.0 - entry_price  # net profit per contract if it settles
+        profit_target = entry_price + max_payout_per_contract * 0.60  # 60% of the way to $1
+        if current_bid >= profit_target and age_seconds > 14400:
+            realized_pnl = round(current_value - cost, 2)
+            gain_pct = (current_bid - entry_price) / max_payout_per_contract * 100 if max_payout_per_contract > 0 else 0
+            if settings.trading_mode == "live" and client:
+                try:
+                    sell_price_cents = int(current_bid * 100)
+                    client.sell_order(ticker, side, contracts, sell_price_cents)
+                except Exception as e:
+                    notify_order_error(f"Profit exit order failed for {ticker}: {e}")
+                    continue
+            conn = get_db()
+            conn.execute(
+                "UPDATE trades SET status = 'settled', pnl_usd = ?, settled_at = ? WHERE id = ?",
+                (realized_pnl, datetime.now(timezone.utc).isoformat(), trade["id"])
+            )
+            conn.commit()
+            conn.close()
+            bankroll = get_current_bankroll() + realized_pnl
+            log_bankroll(bankroll, f"Profit exit {ticker}: {gain_pct:.0f}% of max gain locked")
+            try:
+                from src.core.notifications import notify_profit_exit
+                notify_profit_exit(
+                    ticker=ticker, city=trade.get("city", ""),
+                    entry_cents=int(entry_price * 100), exit_cents=int(current_bid * 100),
+                    contracts=contracts, pnl=realized_pnl, gain_pct=gain_pct,
+                )
+            except Exception:
+                pass
+            exited.append({"ticker": ticker, "pnl": realized_pnl, "gain_pct": gain_pct, "exit_type": "profit"})
+            continue
+
         if loss_pct < _exit_loss_threshold():
             continue  # Position is fine, hold
 
-        # Exit the position
+        # Exit the position (loss)
         realized_pnl = round(current_value - cost, 2)
 
         if settings.trading_mode == "live" and client:
@@ -480,7 +564,6 @@ def exit_losing_positions(current_markets: list, client=None) -> list[dict]:
 
         # Mark as settled with loss in DB
         conn = get_db()
-        from datetime import datetime, timezone
         conn.execute(
             "UPDATE trades SET status = 'settled', pnl_usd = ?, settled_at = ? WHERE id = ?",
             (realized_pnl, datetime.now(timezone.utc).isoformat(), trade["id"])
@@ -493,7 +576,7 @@ def exit_losing_positions(current_markets: list, client=None) -> list[dict]:
 
         notify_early_exit(ticker, entry_price, current_bid, realized_pnl, loss_pct,
                           city=trade.get("city", ""), contracts=contracts, cost=cost)
-        exited.append({"ticker": ticker, "pnl": realized_pnl, "loss_pct": loss_pct})
+        exited.append({"ticker": ticker, "pnl": realized_pnl, "loss_pct": loss_pct, "exit_type": "loss"})
 
     return exited
 
@@ -525,6 +608,69 @@ def get_win_rate_by_city() -> list[dict]:
             "total_pnl": total_pnl or 0,
         })
     return result
+
+
+def log_forecast_accuracy(city: str, target_date: str, threshold_f: float,
+                          forecast_mean: float, actual_temp: float,
+                          side: str, won: bool):
+    """Log model forecast vs actual temp for bias correction tracking."""
+    conn = get_db()
+    error_f = round(forecast_mean - actual_temp, 2) if forecast_mean and actual_temp else None
+    conn.execute("""
+        INSERT INTO forecast_accuracy
+            (timestamp, city, target_date, threshold_f, forecast_mean, actual_temp, error_f, side, won)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        datetime.now(timezone.utc).isoformat(),
+        city, target_date, threshold_f, forecast_mean, actual_temp, error_f,
+        side, 1 if won else 0,
+    ))
+    conn.commit()
+    conn.close()
+
+
+def get_city_bias(city: str, min_samples: int = 5) -> float:
+    """
+    Get the mean forecast error (forecast_mean - actual) for a city.
+    Positive bias = model runs warm (overpredicts). Negative = runs cold.
+    Returns 0.0 if not enough samples yet.
+    """
+    conn = get_db()
+    row = conn.execute("""
+        SELECT AVG(error_f), COUNT(*)
+        FROM forecast_accuracy
+        WHERE city = ? AND error_f IS NOT NULL
+        ORDER BY id DESC
+        LIMIT 30
+    """, (city,)).fetchone()
+    conn.close()
+    avg_error, count = row if row else (None, 0)
+    if count < min_samples or avg_error is None:
+        return 0.0
+    return round(avg_error, 2)
+
+
+def get_forecast_accuracy_stats() -> list[dict]:
+    """Get per-city forecast accuracy summary for dashboard/commands."""
+    conn = get_db()
+    rows = conn.execute("""
+        SELECT city,
+               COUNT(*) as samples,
+               ROUND(AVG(error_f), 2) as mean_bias,
+               ROUND(AVG(ABS(error_f)), 2) as mae,
+               SUM(won) as wins,
+               COUNT(*) - SUM(won) as losses
+        FROM forecast_accuracy
+        WHERE error_f IS NOT NULL
+        GROUP BY city
+        ORDER BY city
+    """).fetchall()
+    conn.close()
+    return [
+        {"city": r[0], "samples": r[1], "mean_bias": r[2], "mae": r[3],
+         "wins": r[4], "losses": r[5]}
+        for r in rows
+    ]
 
 
 def get_open_trades_with_current_prices(last_markets: list) -> list[dict]:

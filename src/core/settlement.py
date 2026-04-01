@@ -10,7 +10,7 @@ from datetime import datetime, timezone, timedelta
 import httpx
 
 from src.config import CITY_CONFIG
-from src.core.trade_executor import get_db, get_current_bankroll, log_bankroll
+from src.core.trade_executor import get_db, get_current_bankroll, log_bankroll, log_forecast_accuracy
 from src.core.notifications import notify_daily_summary
 
 
@@ -162,12 +162,26 @@ def settle_open_trades() -> dict:
         total_pnl += pnl
         settled += 1
 
-        # Update trade in DB
+        # Update trade in DB — store actual temp and settled P&L
         now = datetime.now(timezone.utc).isoformat()
         conn.execute("""
-            UPDATE trades SET status = 'settled', pnl_usd = ?, settled_at = ?
+            UPDATE trades SET status = 'settled', pnl_usd = ?, settled_at = ?, actual_temp = ?
             WHERE id = ?
-        """, (pnl, now, trade["id"]))
+        """, (pnl, now, actual, trade["id"]))
+
+        # Log forecast accuracy for bias correction
+        try:
+            log_forecast_accuracy(
+                city=trade.get("city", ""),
+                target_date=trade["target_date"],
+                threshold_f=trade["threshold_f"],
+                forecast_mean=trade.get("forecast_mean"),
+                actual_temp=actual,
+                side=trade.get("side", ""),
+                won=won,
+            )
+        except Exception:
+            pass
 
         # Update daily P&L
         trade_date = trade["target_date"]
@@ -186,6 +200,8 @@ def settle_open_trades() -> dict:
             """, (trade_date, pnl, 1 if won else 0, 0 if won else 1))
 
         unit = "in" if market_type == "precipitation" else "°F"
+        forecast_mean = trade.get("forecast_mean")
+        model_error = round(forecast_mean - actual, 1) if forecast_mean else None
         results.append({
             "trade_id": trade["id"],
             "ticker": ticker,
@@ -193,6 +209,8 @@ def settle_open_trades() -> dict:
             "target_date": trade["target_date"],
             "threshold": threshold,
             "actual": actual,
+            "forecast_mean": forecast_mean,
+            "model_error": model_error,
             "unit": unit,
             "direction": direction,
             "side": side,

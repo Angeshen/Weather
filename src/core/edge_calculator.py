@@ -145,6 +145,30 @@ def evaluate_market(market: dict, forecast: dict, bankroll: float) -> dict | Non
     model_prob_below = forecast["prob_below"]
     confidence = forecast["confidence"]
 
+    # Apply bias correction: if model historically runs warm/cold for this city,
+    # shift the effective threshold before computing probabilities.
+    # e.g. if model has +2°F warm bias, treat threshold as 2°F higher (harder to exceed).
+    try:
+        from src.core.trade_executor import get_city_bias
+        city = market.get("city", "")
+        bias = get_city_bias(city)  # positive = model runs warm
+        if bias != 0.0:
+            threshold = market.get("threshold_f", 0)
+            n_above = forecast.get("n_above", 0)
+            n_members = forecast.get("n_members", 1)
+            # Adjust mean — shift all members by -bias to correct for warm/cold bias
+            # This effectively raises/lowers the bar for prob_above
+            corrected_mean = forecast.get("mean_high", threshold) - bias
+            shift = corrected_mean - forecast.get("mean_high", corrected_mean)
+            # Approximate corrected prob by shifting threshold instead of resampling
+            import scipy.stats as _stats
+            std = (forecast.get("max_high", corrected_mean) - forecast.get("min_high", corrected_mean)) / 4 or 2.5
+            model_prob_above = float(1 - _stats.norm.cdf(threshold, loc=corrected_mean, scale=std))
+            model_prob_above = max(0.01, min(0.99, model_prob_above))
+            model_prob_below = 1.0 - model_prob_above
+    except Exception:
+        pass  # If bias correction fails, proceed with raw forecast probs
+
     # Trade when ensemble strongly agrees (configurable threshold)
     if confidence < float(settings.min_confidence_threshold):
         return None
