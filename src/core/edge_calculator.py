@@ -81,10 +81,11 @@ def _direction_labels(market_type: str) -> tuple[str, str]:
         return ("ABOVE", "BELOW")
 
 
-def _is_liquid(market: dict) -> bool:
+def _is_liquid(market: dict, required_contracts: int = 0) -> bool:
     """
     Check if a market has enough liquidity to trade safely.
     Wide spreads mean we'd pay too much slippage; low volume means poor fills.
+    If required_contracts is provided, also checks we won't exceed available volume.
     """
     volume = float(market.get("volume", 0) or 0)
     yes_bid = market.get("yes_bid") or 0
@@ -93,6 +94,12 @@ def _is_liquid(market: dict) -> bool:
     no_ask = market.get("no_ask") or 0
 
     if volume < int(settings.min_liquidity_volume):
+        return False
+
+    # If we know how many contracts we need, ensure historical volume can absorb it.
+    # Require 2x our contract count — historical volume != live book depth, so 2x
+    # gives a reasonable buffer for partial fills and thin order books.
+    if required_contracts > 0 and volume < required_contracts * 2:
         return False
 
     # Check spread on whichever side has quotes
@@ -169,6 +176,25 @@ def evaluate_market(market: dict, forecast: dict, bankroll: float) -> dict | Non
         size = compute_position_size(model_prob, price, bankroll, days_to_expiry)
         if size <= 0:
             return None
+
+        raw_contracts = max(1, int(size / price))
+
+        # Cap contracts at 50% of historical volume — avoids trying to fill
+        # orders the market can't absorb (e.g. 15,000 contracts on 10,000 volume).
+        # Worst case: smaller fill, less $ deployed, but trade still valid.
+        market_volume = float(market.get("volume", 0) or 0)
+        if market_volume > 0:
+            contracts = min(raw_contracts, max(1, int(market_volume * 0.5)))
+        else:
+            contracts = raw_contracts
+
+        # Recalculate actual position size based on capped contracts
+        actual_size = round(contracts * price, 2)
+
+        # Re-check liquidity with the actual contract count
+        if not _is_liquid(market, required_contracts=contracts):
+            return None
+
         return {
             "ticker": market["ticker"],
             "city": market["city"],
@@ -182,8 +208,8 @@ def evaluate_market(market: dict, forecast: dict, bankroll: float) -> dict | Non
             "market_price": price,
             "edge": round(calculate_edge(model_prob, price), 4),
             "confidence": round(confidence, 4),
-            "position_size_usd": size,
-            "contracts": max(1, int(size / price)),
+            "position_size_usd": actual_size,
+            "contracts": contracts,
             "price_cents": int(price * 100),
             "days_to_expiry": days_to_expiry,
             "forecast_mean": round(forecast["mean_high"], 1),
