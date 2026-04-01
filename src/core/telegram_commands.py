@@ -203,7 +203,7 @@ def _dispatch_command(cmd: str, text: str, chat_id: str, bot_state: dict):
             current_bid = t.get('yes_bid') or 0
             current_c = int(current_bid * 100) if current_bid else 0
             volume = t.get('volume')
-            vol_str = f" | vol: {int(volume):,}" if volume else ""
+            vol_str = f" | vol: {int(float(volume)):,}" if volume else ""
             upnl = t.get('unrealized_pnl')
             upnl_str = f" | uP&L: <b>${upnl:+.2f}</b>" if upnl is not None else ""
             # Age
@@ -475,7 +475,7 @@ def _dispatch_command(cmd: str, text: str, chat_id: str, bot_state: dict):
                 current_bid = t.get('yes_bid') or 0
                 current_c = int(current_bid * 100) if current_bid else 0
                 vol = t.get('volume')
-                vol_str = f" vol:{int(vol):,}" if vol else ""
+                vol_str = f" vol:{int(float(vol)):,}" if vol else ""
                 upnl = t.get('unrealized_pnl')
                 upnl_str = f" ${upnl:+.2f}" if upnl is not None else ""
                 lines.append(
