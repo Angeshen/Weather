@@ -80,6 +80,15 @@ def _handle_command(text: str, chat_id: str, bot_state: dict):
 
     cmd = text.strip().lower().split()[0]
 
+    try:
+        _dispatch_command(cmd, text, chat_id, bot_state)
+    except Exception as e:
+        _send(f"❌ <b>Error in {cmd}</b>: <code>{str(e)[:200]}</code>", chat_id)
+
+
+def _dispatch_command(cmd: str, text: str, chat_id: str, bot_state: dict):
+    global _trading_paused
+
     if cmd == "/help":
         _send(
             "🤖 <b>Kalshi Bot Commands</b>\n\n"

@@ -297,8 +297,15 @@ def notify_daily_loss_limit(daily_loss: float, limit: float):
     _send_message(text)
 
 
+_cooldown_block_notified: dict = {}
+
 def notify_cooldown_block(ticker: str, city: str, minutes_remaining: float, signal_edge: float):
-    """Alert when a signal is blocked by the 1-hour re-entry cooldown."""
+    """Alert when a signal is blocked by the 1-hour re-entry cooldown. Max once per ticker per 30 min."""
+    import time
+    now = time.time()
+    if now - _cooldown_block_notified.get(ticker, 0) < 1800:
+        return
+    _cooldown_block_notified[ticker] = now
     text = (
         f"⏳ <b>Re-entry Blocked (Cooldown)</b>\n\n"
         f"<b>{city}</b> — <code>{ticker}</code>\n"
@@ -308,8 +315,13 @@ def notify_cooldown_block(ticker: str, city: str, minutes_remaining: float, sign
     _send_message(text)
 
 
+_grace_period_notified: set = set()
+
 def notify_grace_period_skip(ticker: str, city: str, age_minutes: float, loss_pct: float):
-    """Log when a trade is shielded from early exit by the grace period."""
+    """Log when a trade is shielded from early exit by the grace period. Fires once per trade entry."""
+    if ticker in _grace_period_notified:
+        return
+    _grace_period_notified.add(ticker)
     text = (
         f"🛡️ <b>Grace Period Active</b>\n\n"
         f"<b>{city}</b> — <code>{ticker}</code>\n"
@@ -319,8 +331,10 @@ def notify_grace_period_skip(ticker: str, city: str, age_minutes: float, loss_pc
     _send_message(text)
 
 
+_settlement_pending_notified: set = set()
+
 def notify_settlement_pending(open_trades: list):
-    """Morning alert listing open trades that expire today and need to settle."""
+    """Morning alert listing open trades that expire today. Fires once per trade per day."""
     if not open_trades:
         return
     from datetime import date
@@ -328,8 +342,14 @@ def notify_settlement_pending(open_trades: list):
     expiring = [t for t in open_trades if t.get("target_date") == today]
     if not expiring:
         return
-    lines = [f"📅 <b>{len(expiring)} Trade(s) Expiring Today</b>\n"]
-    for t in expiring:
+    # Only alert for trades we haven't already alerted today
+    new_expiring = [t for t in expiring if f"{today}:{t.get('id',t.get('ticker',''))}" not in _settlement_pending_notified]
+    if not new_expiring:
+        return
+    for t in new_expiring:
+        _settlement_pending_notified.add(f"{today}:{t.get('id',t.get('ticker',''))}")
+    lines = [f"📅 <b>{len(new_expiring)} Trade(s) Expiring Today</b>\n"]
+    for t in new_expiring:
         contracts = t.get("contracts", 0)
         cost = t.get("position_size_usd", 0)
         win_target = round(contracts * 1.0 - cost, 2) if contracts and cost else 0
