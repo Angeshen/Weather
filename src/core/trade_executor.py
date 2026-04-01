@@ -154,21 +154,22 @@ def get_open_trade_count() -> int:
 
 def is_ticker_already_open(ticker: str) -> tuple[bool, str]:
     """Return (True, reason) if ticker is blocked, (False, '') if clear.
-    Blocks if: open trade exists, or early-exited within the last hour."""
+    Blocks if: open trade exists in current mode, or early-exited within the last hour."""
     conn = get_db()
-    # Check open trades
+    mode = settings.trading_mode
+    # Check open trades — scoped to current mode so paper/live don't block each other
     row = conn.execute(
-        "SELECT COUNT(*) FROM trades WHERE status = 'open' AND ticker = ?", (ticker,)
+        "SELECT COUNT(*) FROM trades WHERE status = 'open' AND ticker = ? AND mode = ?", (ticker, mode)
     ).fetchone()
     if (row[0] if row else 0) > 0:
         conn.close()
         return True, "open"
-    # Check if early-exited (settled with loss) within the last 60 minutes
+    # Check if early-exited (settled with loss) within the last 60 minutes — scoped to mode
     one_hour_ago = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
     row = conn.execute(
-        "SELECT id, settled_at FROM trades WHERE ticker = ? AND status = 'settled' "
+        "SELECT id, settled_at FROM trades WHERE ticker = ? AND mode = ? AND status = 'settled' "
         "AND pnl_usd < 0 AND settled_at > ? ORDER BY id DESC LIMIT 1",
-        (ticker, one_hour_ago)
+        (ticker, mode, one_hour_ago)
     ).fetchone()
     conn.close()
     if row:
