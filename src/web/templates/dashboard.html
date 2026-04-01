@@ -436,7 +436,7 @@ async function refreshOpenPositions(openTrades) {
     }
     countEl.textContent = openTrades.length + ' open';
     let totalUnrealized = 0;
-    let html = '<table><thead><tr><th>Ticker</th><th>City</th><th>Dir</th><th>Entry</th><th>Current</th><th>Contracts</th><th>Cost</th><th>Unrealized</th><th>Target</th><th>Volume</th><th>Age</th></tr></thead><tbody>';
+    let html = '<table><thead><tr><th>Ticker</th><th>City</th><th>Dir</th><th>Entry</th><th>Current</th><th>Contracts</th><th>Cost</th><th>Unrealized</th><th>Target</th><th>Volume</th><th>Age</th><th>Expires</th></tr></thead><tbody>';
     for (const t of openTrades) {
         const unreal = t.unrealized_pnl;
         if (unreal != null) totalUnrealized += unreal;
@@ -451,6 +451,29 @@ async function refreshOpenPositions(openTrades) {
             const diffH = Math.floor((Date.now() - new Date(t.timestamp)) / 3600000);
             const diffD = Math.floor(diffH / 24);
             age = diffD > 0 ? `${diffD}d ${diffH%24}h` : `${diffH}h`;
+        }
+        // Expires — time until target_date end-of-day (Kalshi settles ~8pm ET)
+        let expiresStr = '—';
+        let expiresStyle = 'color:var(--text-dim);font-size:11px';
+        if (t.target_date) {
+            const settle = new Date(t.target_date + 'T20:00:00-04:00');
+            const msLeft = settle - Date.now();
+            if (msLeft <= 0) {
+                expiresStr = 'Settling...';
+                expiresStyle = 'color:var(--yellow);font-size:11px;font-weight:600';
+            } else {
+                const hLeft = Math.floor(msLeft / 3600000);
+                const mLeft = Math.floor((msLeft % 3600000) / 60000);
+                if (hLeft >= 24) {
+                    const dLeft = Math.floor(hLeft / 24);
+                    expiresStr = `${dLeft}d ${hLeft%24}h`;
+                } else if (hLeft < 4) {
+                    expiresStr = `${hLeft}h ${mLeft}m`;
+                    expiresStyle = 'color:var(--orange,#f97316);font-size:11px;font-weight:600';
+                } else {
+                    expiresStr = `${hLeft}h ${mLeft}m`;
+                }
+            }
         }
         // Win target = profit if settles in our favor
         const target = (t.contracts && t.position_size_usd)
@@ -469,6 +492,7 @@ async function refreshOpenPositions(openTrades) {
             <td>${target}</td>
             <td style="color:var(--text-dim);font-size:11px">${volStr}</td>
             <td style="color:var(--text-dim);font-size:11px">${age}</td>
+            <td style="${expiresStyle}">${expiresStr}</td>
         </tr>`;
     }
     html += '</tbody></table>';
