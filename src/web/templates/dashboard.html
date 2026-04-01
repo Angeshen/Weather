@@ -436,7 +436,7 @@ async function refreshOpenPositions(openTrades) {
     }
     countEl.textContent = openTrades.length + ' open';
     let totalUnrealized = 0;
-    let html = '<table><thead><tr><th>Ticker</th><th>City</th><th>Dir</th><th>Entry</th><th>Current</th><th>Contracts</th><th>Cost</th><th>Unrealized</th><th>Target</th><th>Volume</th><th>Age</th><th>Expires</th></tr></thead><tbody>';
+    let html = '<table><thead><tr><th>Ticker</th><th>City</th><th>Dir</th><th>Mode</th><th>Entry</th><th>Current</th><th>Contracts</th><th>Cost</th><th>Unrealized</th><th>Target</th><th>Volume</th><th>Age</th><th>Expires</th></tr></thead><tbody>';
     for (const t of openTrades) {
         const unreal = t.unrealized_pnl;
         if (unreal != null) totalUnrealized += unreal;
@@ -484,6 +484,7 @@ async function refreshOpenPositions(openTrades) {
             <td><code style="font-size:11px;cursor:pointer;color:var(--cyan);text-decoration:underline;text-decoration-style:dotted" onclick="goToMarket('${t.ticker||''}')" title="Jump to Markets tab">${t.ticker||'?'}</code></td>
             <td>${t.city||'?'}</td>
             <td class="${dirClass}">${(t.side||'').toUpperCase()}</td>
+            <td style="font-size:11px;font-weight:600;color:${t.mode==='live'?'var(--green)':'var(--text-dim)'}">${(t.mode||'paper').toUpperCase()}</td>
             <td style="color:var(--text-dim)">${entryPct}</td>
             <td style="font-weight:600">${curPct}</td>
             <td>${t.contracts||'?'}</td>
