@@ -45,7 +45,9 @@ class KalshiClient:
 
     def _headers(self, method: str, path: str) -> dict:
         timestamp_ms = int(time.time() * 1000)
-        sig = self._sign_request(method, path, timestamp_ms)
+        # Kalshi requires the full path (including /trade-api/v2 prefix) to be signed
+        full_path = f"/trade-api/v2{path}"
+        sig = self._sign_request(method, full_path, timestamp_ms)
         return {
             "KALSHI-ACCESS-KEY": self.api_key_id,
             "KALSHI-ACCESS-SIGNATURE": sig,
