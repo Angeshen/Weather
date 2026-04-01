@@ -470,8 +470,8 @@ def exit_losing_positions(current_markets: list, client=None) -> list[dict]:
         if not entry_price or not contracts or not cost:
             continue
 
-        # Skip early exit for penny contracts — bid/ask spread is noise on illiquid markets
-        if entry_price < 0.05:
+        # Skip early exit for low-price contracts — bid/ask spread is noise on illiquid markets
+        if entry_price < 0.10:
             continue
 
         # Skip exit check for trades entered less than 15 minutes ago
@@ -481,7 +481,7 @@ def exit_losing_positions(current_markets: list, client=None) -> list[dict]:
                 entered_at = entered_at.replace(tzinfo=timezone.utc)
             age_seconds = (datetime.now(timezone.utc) - entered_at).total_seconds()
         except Exception:
-            age_seconds = 0  # If parsing fails, assume new trade — skip exit
+            age_seconds = 9999  # If parsing fails, assume old trade — allow exit check
         if age_seconds < 900:
             # Notify if the trade would have been exited but is protected
             current_bid_check = market.get("yes_bid") if trade.get("side") == "yes" else market.get("no_bid")
