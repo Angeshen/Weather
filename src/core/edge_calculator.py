@@ -183,6 +183,20 @@ def evaluate_market(market: dict, forecast: dict, bankroll: float) -> dict | Non
     yes_ask = market.get("yes_ask")
     no_ask = market.get("no_ask")
 
+    # Use the actual YES direction and threshold from Kalshi's subtitle
+    # e.g. "62° or above" -> yes_means_above=True, yes_threshold=62
+    # e.g. "53° or below" -> yes_means_above=False, yes_threshold=53
+    yes_means_above = market.get("yes_means_above", True)
+    yes_threshold = market.get("yes_threshold") or market.get("threshold_f")
+
+    # Model prob that YES wins = prob_above if YES=above, prob_below if YES=below
+    model_prob_yes = model_prob_above if yes_means_above else model_prob_below
+    model_prob_no = 1.0 - model_prob_yes
+
+    # Direction labels based on actual contract direction
+    yes_direction = "ABOVE" if yes_means_above else "BELOW"
+    no_direction = "BELOW" if yes_means_above else "ABOVE"
+
     signals = []
 
     def _build_signal(side, direction, model_prob, price):
@@ -226,7 +240,8 @@ def evaluate_market(market: dict, forecast: dict, bankroll: float) -> dict | Non
             "ticker": market["ticker"],
             "city": market["city"],
             "target_date": market["target_date"],
-            "threshold_f": market["threshold_f"],
+            "threshold_f": yes_threshold,
+            "yes_means_above": yes_means_above,
             "market_type": market_type,
             "unit": unit,
             "side": side,
@@ -246,19 +261,19 @@ def evaluate_market(market: dict, forecast: dict, bankroll: float) -> dict | Non
             "n_above": forecast["n_above"],
         }
 
-    # Check YES side
+    # Check YES side — model_prob_yes is prob that YES wins given actual contract direction
     if yes_ask and yes_ask > 0:
-        edge_yes = calculate_edge(model_prob_above, yes_ask)
+        edge_yes = calculate_edge(model_prob_yes, yes_ask)
         if edge_yes >= settings.min_edge_threshold:
-            sig = _build_signal("yes", yes_label, model_prob_above, yes_ask)
+            sig = _build_signal("yes", yes_direction, model_prob_yes, yes_ask)
             if sig:
                 signals.append(sig)
 
     # Check NO side
     if no_ask and no_ask > 0:
-        edge_no = calculate_edge(model_prob_below, no_ask)
+        edge_no = calculate_edge(model_prob_no, no_ask)
         if edge_no >= settings.min_edge_threshold:
-            sig = _build_signal("no", no_label, model_prob_below, no_ask)
+            sig = _build_signal("no", no_direction, model_prob_no, no_ask)
             if sig:
                 signals.append(sig)
 

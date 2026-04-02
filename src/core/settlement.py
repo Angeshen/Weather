@@ -136,14 +136,17 @@ def settle_open_trades() -> dict:
         threshold = trade["threshold_f"]
         direction = trade.get("direction", "").upper()
         side = trade.get("side", "").lower()
+        yes_means_above = trade.get("yes_means_above", True)  # True = YES wins if actual > threshold
 
-        # Determine if trade won
-        actual_above = actual > threshold
+        # Determine if trade won using actual contract direction from Kalshi subtitle
+        # yes_means_above=True:  YES wins if actual >= threshold (e.g. "62° or above")
+        # yes_means_above=False: YES wins if actual <= threshold (e.g. "53° or below")
+        if yes_means_above:
+            contract_wins = actual >= threshold
+        else:
+            contract_wins = actual <= threshold
 
-        if side == "yes":
-            won = actual_above
-        else:  # side == "no"
-            won = not actual_above
+        won = contract_wins if side == "yes" else not contract_wins
 
         # Calculate P&L
         # Each contract pays $1 on a win. You paid `cost` total for `contracts` contracts.

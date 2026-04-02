@@ -97,6 +97,19 @@ def _enrich_market(market: dict, parsed: dict) -> dict:
     last_price = _parse_price(market.get("last_price_dollars") or market.get("last_price"))
     volume = market.get("volume_fp") or market.get("volume", 0)
 
+    # Parse YES direction and corrected threshold from subtitle
+    # e.g. "62° or above" -> yes_means_above=True, yes_threshold=62
+    # e.g. "53° or below" -> yes_means_above=False, yes_threshold=53
+    subtitle = market.get("yes_sub_title", "")
+    yes_means_above = True  # default
+    yes_threshold = parsed.get("threshold_f")  # fallback to ticker threshold
+    if subtitle:
+        import re as _re
+        m = _re.search(r'(\d+(?:\.\d+)?)[°]?\s*or\s*(above|below)', subtitle, _re.IGNORECASE)
+        if m:
+            yes_threshold = float(m.group(1))
+            yes_means_above = m.group(2).lower() == "above"
+
     parsed.update({
         "yes_bid": yes_price,
         "yes_ask": yes_ask,
@@ -105,7 +118,9 @@ def _enrich_market(market: dict, parsed: dict) -> dict:
         "last_price": last_price,
         "volume": volume,
         "market_status": market.get("status", ""),
-        "subtitle": market.get("yes_sub_title", ""),
+        "subtitle": subtitle,
+        "yes_means_above": yes_means_above,
+        "yes_threshold": yes_threshold,
         "raw_market": market,
     })
     return parsed

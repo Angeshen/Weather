@@ -50,7 +50,8 @@ def init_db():
             order_id TEXT,
             note TEXT DEFAULT '',
             actual_temp REAL,
-            filled_contracts INTEGER
+            filled_contracts INTEGER,
+            yes_means_above INTEGER DEFAULT 1
         )
     """)
     conn.execute("""
@@ -89,6 +90,7 @@ def init_db():
         ("note", "TEXT DEFAULT ''"),
         ("actual_temp", "REAL"),
         ("filled_contracts", "INTEGER"),
+        ("yes_means_above", "INTEGER DEFAULT 1"),
     ]:
         try:
             conn.execute(f"SELECT {col} FROM trades LIMIT 1")
@@ -218,8 +220,8 @@ def execute_paper_trade(signal: dict) -> dict:
             timestamp, ticker, city, target_date, threshold_f,
             side, direction, model_prob, market_price, edge, confidence,
             contracts, price_cents, position_size_usd, mode, status,
-            forecast_mean, forecast_min, forecast_max, n_members, n_above
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'paper', 'open', ?, ?, ?, ?, ?)
+            forecast_mean, forecast_min, forecast_max, n_members, n_above, yes_means_above
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'paper', 'open', ?, ?, ?, ?, ?, ?)
     """, (
         datetime.now(timezone.utc).isoformat(),
         signal["ticker"],
@@ -240,6 +242,7 @@ def execute_paper_trade(signal: dict) -> dict:
         signal.get("forecast_max"),
         signal.get("n_members"),
         signal.get("n_above"),
+        1 if signal.get("yes_means_above", True) else 0,
     ))
     trade_id = cursor.lastrowid
     conn.commit()
@@ -296,8 +299,8 @@ def execute_live_trade(signal: dict, client: KalshiClient) -> dict:
                 side, direction, model_prob, market_price, edge, confidence,
                 contracts, price_cents, position_size_usd, mode, status,
                 forecast_mean, forecast_min, forecast_max, n_members, n_above,
-                order_id, filled_contracts
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'live', 'open', ?, ?, ?, ?, ?, ?, ?)
+                order_id, filled_contracts, yes_means_above
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'live', 'open', ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             datetime.now(timezone.utc).isoformat(),
             signal["ticker"],
@@ -320,6 +323,7 @@ def execute_live_trade(signal: dict, client: KalshiClient) -> dict:
             signal.get("n_above"),
             order_id,
             filled_contracts,
+            1 if signal.get("yes_means_above", True) else 0,
         ))
         trade_id = cursor.lastrowid
         conn.commit()
