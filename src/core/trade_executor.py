@@ -492,7 +492,7 @@ def reconcile_resting_orders(client) -> list[dict]:
             order_status = order.get("status", "")
             filled = int(order.get("filled_count") or order.get("quantity_filled") or 0)
 
-            if order_status in ("resting", "pending") and filled == 0:
+            if order_status in ("resting", "pending", "canceled", "cancelled") and filled == 0:
                 # Cancel the resting order on Kalshi
                 try:
                     client.cancel_order(order_id)
