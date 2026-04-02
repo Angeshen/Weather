@@ -109,8 +109,10 @@ class KalshiClient:
             "type": order_type,
         }
         if order_type == "limit":
-            body["yes_price"] = price_cents if side == "yes" else None
-            body["no_price"] = price_cents if side == "no" else None
+            if side == "yes":
+                body["yes_price"] = price_cents
+            else:
+                body["no_price"] = price_cents
         return self._post("/portfolio/orders", body=body)
 
     def sell_order(self, ticker: str, side: str, quantity: int, price_cents: int) -> dict:

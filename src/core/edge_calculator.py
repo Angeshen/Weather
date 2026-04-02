@@ -192,8 +192,11 @@ def evaluate_market(market: dict, forecast: dict, bankroll: float) -> dict | Non
 
         # Skip very cheap contracts — usually near-expiry noise.
         # Exception: allow down to min_contract_price_high_edge when edge is strong.
+        # Hard floor of 3¢ regardless of edge — a 1-2¢ contract means market is 98-99% confident
+        # the other side wins; our NWP model should not override that level of market consensus.
         edge = model_prob - price
         min_price = settings.min_contract_price_high_edge if edge >= settings.high_edge_price_threshold else settings.min_contract_price
+        min_price = max(min_price, 0.03)
         if price < min_price:
             return None
 

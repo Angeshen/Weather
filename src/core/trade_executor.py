@@ -560,12 +560,16 @@ def exit_losing_positions(current_markets: list, client=None) -> list[dict]:
         if settings.trading_mode == "live" and client:
             try:
                 sell_price_cents = int(current_bid * 100)
-                client.sell_order(ticker, side, contracts, sell_price_cents)
+                resp = client.sell_order(ticker, side, contracts, sell_price_cents)
+                order = resp.get("order", {})
+                if not order.get("order_id") and not order.get("status"):
+                    notify_order_error(f"Exit order response missing confirmation for {ticker}: {resp}")
+                    continue
             except Exception as e:
                 notify_order_error(f"Exit order failed for {ticker}: {e}")
                 continue
 
-        # Mark as settled with loss in DB
+        # Mark as settled with loss in DB — only reached if live sell succeeded (or paper)
         conn = get_db()
         conn.execute(
             "UPDATE trades SET status = 'settled', pnl_usd = ?, settled_at = ? WHERE id = ?",
