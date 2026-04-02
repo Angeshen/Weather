@@ -515,6 +515,15 @@ def reconcile_resting_orders(client) -> list[dict]:
                     log_bankroll(new_bankroll, f"Cancelled resting order #{order_id} on {trade['ticker']} — refunded ${refund:.2f}")
 
                 cancelled.append({"trade_id": trade["id"], "ticker": trade["ticker"], "order_id": order_id})
+                try:
+                    from src.core.notifications import _send_message
+                    _send_message(
+                        f"⚠️ <b>Resting Order Cancelled</b>\n"
+                        f"<code>{trade['ticker']}</code> — order never filled\n"
+                        f"Refunded: <b>${refund:.2f}</b> back to bankroll"
+                    )
+                except Exception:
+                    pass
 
         except Exception:
             continue
