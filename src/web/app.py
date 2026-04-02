@@ -392,6 +392,22 @@ def api_stats():
     return jsonify(get_stats())
 
 
+@app.route("/api/daily-pnl")
+def api_daily_pnl():
+    """Return daily P&L history for bar chart (last 30 days)."""
+    from src.core.trade_executor import get_db
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT date, total_pnl, trades_count, wins, losses "
+        "FROM daily_pnl ORDER BY date DESC LIMIT 30"
+    ).fetchall()
+    conn.close()
+    return jsonify([
+        {"date": r[0], "total_pnl": round(r[1], 2), "trades": r[2], "wins": r[3], "losses": r[4]}
+        for r in reversed(rows)
+    ])
+
+
 @app.route("/api/trades")
 def api_trades():
     limit = request.args.get("limit", 50, type=int)

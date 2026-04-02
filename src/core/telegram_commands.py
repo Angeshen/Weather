@@ -5,11 +5,13 @@ Runs as a background thread. No webhook needed.
 Supported commands:
   /help            — list all commands
   /status          — bankroll, mode, win rate, last scan
+  /positions       — open positions with unrealized P&L and forecast
   /trades          — open positions with edge, age, win target
   /pnl             — today + all-time P&L
   /bankroll        — quick bankroll one-liner
   /scan            — trigger a manual scan + show signals
   /forecast        — model vs market for all active tickers
+  /weather [city]  — NWP forecast for a city (e.g. /weather CHI)
   /risk            — current exposure, daily loss used, max loss
   /exits           — recent early exits
   /settled         — last 10 settled trades
@@ -95,11 +97,13 @@ def _dispatch_command(cmd: str, text: str, chat_id: str, bot_state: dict):
             "📊 <b>Info</b>\n"
             "/summary — Full snapshot of everything\n"
             "/status — Bankroll, mode, win rate, last scan\n"
-            "/trades — Open positions + live volume & bid\n"
+            "/positions — Open positions with uP&L + forecast vs threshold\n"
+            "/trades — Open positions with edge, age, win target\n"
             "/pnl — Today's P&L and running totals\n"
             "/bankroll — Quick bankroll one-liner\n"
             "/risk — Exposure, daily loss used, max loss\n"
             "/forecast — Model vs market for all tickers\n"
+            "/weather [city] — NWP forecast for a city\n"
             "/edge [ticker] — Edge check for one ticker\n"
             "/cities — W/L and P&L by city\n"
             "/exits — Recent early exits\n"
@@ -116,6 +120,44 @@ def _dispatch_command(cmd: str, text: str, chat_id: str, bot_state: dict):
             "/help — Show this message",
             chat_id,
         )
+
+    elif cmd == "/positions":
+        from src.core.trade_executor import get_open_trades_with_current_prices
+        from datetime import datetime, timezone
+        last_markets = bot_state.get("last_markets", [])
+        trades = get_open_trades_with_current_prices(last_markets)
+        if not trades:
+            _send("📂 No open positions right now.", chat_id)
+            return
+        lines = [f"📂 <b>{len(trades)} Open Position(s)</b>\n"]
+        for t in trades:
+            entry_c = int(t.get('market_price', 0) * 100)
+            contracts = t.get('contracts', 0)
+            cost = t.get('position_size_usd', 0)
+            win_target = round(contracts * 1.0 - cost, 2) if contracts and cost else 0
+            upnl = t.get('unrealized_pnl')
+            upnl_str = f"uP&L: <b>${upnl:+.2f}</b>" if upnl is not None else "uP&L: —"
+            forecast = t.get('forecast_mean')
+            threshold = t.get('threshold_f')
+            yes_above = bool(t.get('yes_means_above', 1))
+            direction = "above" if yes_above else "below"
+            fcast_str = f"Forecast: {forecast}°F vs {threshold}°F ({direction})" if forecast and threshold else ""
+            side = t.get('side', '?').upper()
+            try:
+                entered = datetime.fromisoformat(t['timestamp'])
+                if entered.tzinfo is None:
+                    entered = entered.replace(tzinfo=timezone.utc)
+                age_h = int((datetime.now(timezone.utc) - entered).total_seconds() / 3600)
+                age_str = f"{age_h}h old"
+            except Exception:
+                age_str = "?"
+            lines.append(
+                f"• <b>{t.get('city','?')}</b> <code>{t['ticker']}</code> [{side}]\n"
+                f"  Entry: {entry_c}¢ | {contracts}c × ${cost:.2f} → 🏆${win_target:.2f}\n"
+                f"  {upnl_str} | {age_str}"
+                + (f"\n  🌡️ {fcast_str}" if fcast_str else "")
+            )
+        _send("\n".join(lines), chat_id)
 
     elif cmd == "/status":
         from src.core.trade_executor import get_stats, get_daily_loss_today
@@ -323,6 +365,52 @@ def _dispatch_command(cmd: str, text: str, chat_id: str, bot_state: dict):
                 remaining_str = "?"
             lines.append(f"• <b>{city}</b> <code>{ticker}</code> — {remaining_str} remaining")
         _send("\n".join(lines), chat_id)
+
+    elif cmd == "/weather":
+        parts = text.strip().split()
+        if len(parts) < 2:
+            _send("❌ Usage: /weather [city] (e.g. /weather CHI)", chat_id)
+            return
+        city_code = parts[1].upper()
+        _send(f"🌡️ Fetching forecast for <b>{city_code}</b>...", chat_id)
+        try:
+            from src.data.market_scanner import scan_weather_markets_public
+            markets = [m for m in scan_weather_markets_public() if city_code in m.get('ticker', '')]
+            if not markets:
+                _send(f"❌ No active markets found for <b>{city_code}</b>.", chat_id)
+                return
+            from src.data.weather import get_forecast_for_city
+            m = markets[0]
+            forecast = get_forecast_for_city(
+                series_ticker=m["series_ticker"],
+                target_date=m["target_date"],
+                threshold=m["threshold_f"],
+            )
+            if forecast.get("error") or forecast.get("n_members", 0) == 0:
+                _send(f"❌ No forecast data for {city_code}: {forecast.get('error', 'no ensemble members')}", chat_id)
+                return
+            unit = m.get("unit", "°F")
+            mean = forecast.get("forecast_mean", "?")
+            fmin = forecast.get("forecast_min", "?")
+            fmax = forecast.get("forecast_max", "?")
+            n = forecast.get("n_members", 0)
+            conf = forecast.get("confidence", 0)
+            prob_above = forecast.get("prob_above", 0)
+            lines = [
+                f"🌡️ <b>{city_code} Forecast</b> — {m['target_date']}\n",
+                f"Mean: <b>{mean}{unit}</b>  Range: {fmin}–{fmax}{unit}",
+                f"Ensemble: {n} members | Confidence: {conf*100:.1f}%",
+                f"P(above threshold): {prob_above*100:.1f}%\n",
+            ]
+            # Show all active thresholds for this city/date
+            city_markets = [x for x in markets if x.get('target_date') == m['target_date']]
+            for cm in city_markets[:6]:
+                yes_dir = "above" if cm.get('yes_means_above', True) else "below"
+                ask = cm.get('yes_ask', 0) or 0
+                lines.append(f"  {cm['ticker'].split('-')[-1]} YES={yes_dir} {cm.get('yes_threshold','?')}{unit} | ask {ask*100:.0f}¢")
+            _send("\n".join(lines), chat_id)
+        except Exception as e:
+            _send(f"❌ Weather fetch failed: {e}", chat_id)
 
     elif cmd == "/forecast":
         _send("📡 Fetching forecasts...", chat_id)

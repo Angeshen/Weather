@@ -423,6 +423,20 @@ def get_stats() -> dict:
     wins = conn.execute("SELECT COUNT(*) FROM trades WHERE status = 'settled' AND pnl_usd > 0").fetchone()[0]
     total_pnl = conn.execute("SELECT COALESCE(SUM(pnl_usd), 0) FROM trades WHERE status = 'settled'").fetchone()[0]
 
+    # Current win/loss streak: count consecutive same-outcome trades from most recent
+    streak = 0
+    recent = conn.execute(
+        "SELECT pnl_usd FROM trades WHERE status='settled' ORDER BY settled_at DESC LIMIT 20"
+    ).fetchall()
+    if recent:
+        first_won = (recent[0][0] or 0) > 0
+        for row in recent:
+            won = (row[0] or 0) > 0
+            if won == first_won:
+                streak += 1 if first_won else -1
+            else:
+                break
+
     conn.close()
 
     return {
@@ -435,6 +449,7 @@ def get_stats() -> dict:
         "total_pnl": round(total_pnl, 2),
         "daily_pnl": round(get_daily_loss_today(), 2),
         "bankroll": round(get_current_bankroll(), 2),
+        "streak": streak,
     }
 
 

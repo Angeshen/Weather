@@ -147,9 +147,21 @@ def notify_settlement(results: dict):
     for r in results.get("results", []):
         outcome = "✅ WON" if r["won"] else "❌ LOST"
         side_str = r.get('side', 'yes').upper()
+        unit = r.get('unit', '°F')
+        actual = r.get('actual')
+        threshold = r.get('threshold')
+        forecast_mean = r.get('forecast_mean')
+        # Forecast accuracy line
+        if forecast_mean and actual:
+            err = round(actual - forecast_mean, 1)
+            err_str = f"{err:+.1f}{unit} forecast error"
+            fcast_line = f"  📊 Forecast: {forecast_mean}{unit} → Actual: <b>{actual}{unit}</b> ({err_str})\n"
+        else:
+            fcast_line = f"  Actual: <b>{actual}{unit}</b> vs threshold {threshold}{unit}\n"
         lines.append(
             f"  {outcome} <b>{r['city']}</b> {r['target_date']}\n"
-            f"  {side_str} — Actual: <b>{r['actual']}{r['unit']}</b> vs threshold {r['threshold']}{r['unit']}\n"
+            f"  {side_str} threshold {threshold}{unit}\n"
+            f"{fcast_line}"
             f"  P&L: <b>${r['pnl']:+.2f}</b>"
         )
 

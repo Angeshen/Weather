@@ -174,6 +174,7 @@
             <div class="stat-card"><div class="label">Active Signals</div><div class="value green" id="statSignals">0</div></div>
             <div class="stat-card"><div class="label">Scans</div><div class="value" id="statScans">0</div></div>
             <div class="stat-card"><div class="label">Today's P&amp;L</div><div class="value" id="statDailyPnl">$0.00</div></div>
+            <div class="stat-card"><div class="label">Streak</div><div class="value" id="statStreak">—</div></div>
         </div>
     </div>
 
@@ -197,6 +198,12 @@
                 </div>
                 <div class="panel-body" style="max-height:none;overflow:visible;">
                     <div class="chart-container"><canvas id="equityChart"></canvas></div>
+                </div>
+            </div>
+            <div class="panel">
+                <div class="panel-header"><span>Daily P&amp;L</span><span class="last-scan" id="dailyPnlChartCount"></span></div>
+                <div class="panel-body" style="max-height:none;overflow:visible;">
+                    <div class="chart-container" style="height:200px;"><canvas id="dailyPnlChart"></canvas></div>
                 </div>
             </div>
             <div class="panel">
@@ -359,6 +366,14 @@ async function refreshStats() {
             $('statDailyPnl').textContent = (stats.daily_pnl >= 0 ? '+' : '') + usd(stats.daily_pnl);
             $('statDailyPnl').className = 'value ' + (stats.daily_pnl >= 0 ? 'green' : 'red');
         }
+        // Streak
+        if (stats.streak !== undefined) {
+            const s = stats.streak;
+            const streakEl = $('statStreak');
+            if (s > 0) { streakEl.textContent = `🔥${s}W`; streakEl.className = 'value green'; }
+            else if (s < 0) { streakEl.textContent = `❄️${Math.abs(s)}L`; streakEl.className = 'value red'; }
+            else { streakEl.textContent = '—'; streakEl.className = 'value'; }
+        }
         // Update Positions tab badge with open count
         const posBtn = $('tabPositionsBtn');
         if (posBtn) {
@@ -436,7 +451,7 @@ async function refreshOpenPositions(openTrades) {
     }
     countEl.textContent = openTrades.length + ' open';
     let totalUnrealized = 0;
-    let html = '<table><thead><tr><th>Ticker</th><th>City</th><th>Dir</th><th>Mode</th><th>Entry</th><th>Current</th><th>Contracts</th><th>Cost</th><th>Unrealized</th><th>Target</th><th>Volume</th><th>Age</th><th>Expires</th></tr></thead><tbody>';
+    let html = '<table><thead><tr><th>Ticker</th><th>City</th><th>Dir</th><th>Mode</th><th>Entry</th><th>Current</th><th>Contracts</th><th>Cost</th><th>Unrealized</th><th>Target</th><th>Forecast</th><th>Volume</th><th>Age</th><th>Expires</th></tr></thead><tbody>';
     for (const t of openTrades) {
         const unreal = t.unrealized_pnl;
         if (unreal != null) totalUnrealized += unreal;
@@ -480,6 +495,11 @@ async function refreshOpenPositions(openTrades) {
             ? `<span class="pnl-pos">+${usd(t.contracts - t.position_size_usd)}</span>`
             : '—';
         const volStr = t.volume != null ? Number(t.volume).toLocaleString() : '—';
+        const forecastStr = t.forecast_mean != null ? `${t.forecast_mean}°` : '—';
+        const threshStr = t.threshold_f != null ? `${t.threshold_f}°` : '—';
+        const forecastVsThresh = t.forecast_mean != null && t.threshold_f != null
+            ? `<span style="font-size:11px">${forecastStr} <span style="color:var(--text-dim)">vs</span> ${threshStr}</span>`
+            : '—';
         html += `<tr>
             <td><code style="font-size:11px;cursor:pointer;color:var(--cyan);text-decoration:underline;text-decoration-style:dotted" onclick="goToMarket('${t.ticker||''}')" title="Jump to Markets tab">${t.ticker||'?'}</code></td>
             <td>${t.city||'?'}</td>
@@ -491,6 +511,7 @@ async function refreshOpenPositions(openTrades) {
             <td>${t.position_size_usd ? usd(t.position_size_usd) : '—'}</td>
             <td>${unrealStr}</td>
             <td>${target}</td>
+            <td>${forecastVsThresh}</td>
             <td style="color:var(--text-dim);font-size:11px">${volStr}</td>
             <td style="color:var(--text-dim);font-size:11px">${age}</td>
             <td style="${expiresStyle}">${expiresStr}</td>
@@ -525,7 +546,7 @@ async function refreshTrades() {
             $('tradesBody').innerHTML = '<div class="empty-state"><div class="icon">&#128202;</div><p>No trades yet</p></div>';
             return;
         }
-        let html = '<table><thead><tr><th>#</th><th>Time</th><th>Ticker</th><th>Mode</th><th>Side</th><th>Edge</th><th>Size</th><th>Status</th><th>Duration</th><th>P&L</th><th>Unrealized</th><th>Win Profit</th></tr></thead><tbody>';
+        let html = '<table><thead><tr><th>#</th><th>Time</th><th>Ticker</th><th>Mode</th><th>Side</th><th>Edge</th><th>Size</th><th>Status</th><th>Duration</th><th>P&L</th><th>Unrealized</th><th>Forecast</th><th>Actual</th><th>Win Profit</th></tr></thead><tbody>';
         for (const t of trades) {
             const pnlClass = (t.pnl_usd || 0) > 0 ? 'pnl-pos' : (t.pnl_usd || 0) < 0 ? 'pnl-neg' : '';
             const pnl = t.pnl_usd != null && t.status === 'settled' ? usd(t.pnl_usd) : '—';
@@ -551,6 +572,8 @@ async function refreshTrades() {
             const winProfit = winProfitVal != null
                 ? `<span class="${winProfitColor}">+${usd(winProfitVal)}</span>`
                 : '—';
+            const forecastMean = t.forecast_mean != null ? `${t.forecast_mean}°` : '—';
+            const actualTemp = t.actual_temp != null ? `<b>${t.actual_temp}°</b>` : '—';
             html += `<tr>
                 <td>${t.id}</td>
                 <td>${time}</td>
@@ -563,6 +586,8 @@ async function refreshTrades() {
                 <td style="color:var(--text-dim);font-size:11px">${durationStr}</td>
                 <td class="${pnlClass}">${pnl}</td>
                 <td>${t.status === 'open' ? unrealStr : '—'}</td>
+                <td style="font-size:11px;color:var(--text-dim)">${forecastMean}</td>
+                <td style="font-size:11px">${actualTemp}</td>
                 <td>${winProfit}</td>
             </tr>`;
         }
@@ -731,6 +756,47 @@ function renderMarkets(markets, signals) {
     }
     html += '</tbody></table>';
     $('marketsBody').innerHTML = html;
+}
+
+let _dailyPnlChart = null;
+async function refreshDailyPnlChart() {
+    try {
+        const data = await api('/api/daily-pnl');
+        if (!data || !data.length) return;
+        $('dailyPnlChartCount').textContent = data.length + ' days';
+        const ctx = document.getElementById('dailyPnlChart');
+        if (!ctx) return;
+        if (_dailyPnlChart) _dailyPnlChart.destroy();
+        _dailyPnlChart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: data.map(d => d.date.substring(5)),
+                datasets: [{
+                    label: 'Daily P&L ($)',
+                    data: data.map(d => d.total_pnl),
+                    backgroundColor: data.map(d => d.total_pnl >= 0 ? 'rgba(0,214,143,0.7)' : 'rgba(255,107,107,0.7)'),
+                    borderColor: data.map(d => d.total_pnl >= 0 ? '#00d68f' : '#ff6b6b'),
+                    borderWidth: 1,
+                    borderRadius: 4,
+                }]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: ctx => `P&L: $${ctx.raw.toFixed(2)}  W:${data[ctx.dataIndex].wins} L:${data[ctx.dataIndex].losses}`
+                        }
+                    }
+                },
+                scales: {
+                    x: { ticks: { color: '#8b8fa3', font: { size: 11 } }, grid: { color: '#2d3140' } },
+                    y: { ticks: { color: '#8b8fa3', font: { size: 11 }, callback: v => '$' + v.toFixed(2) }, grid: { color: '#2d3140' } }
+                }
+            }
+        });
+    } catch(e) {}
 }
 
 function goToMarket(ticker) {
@@ -1166,6 +1232,7 @@ async function saveNote(tradeId) {
     await refreshCityStats();
     await loadConfig();
     await loadEquityChart();
+    await refreshDailyPnlChart();
 })();
 
 setInterval(async () => {
@@ -1173,6 +1240,7 @@ setInterval(async () => {
     await refreshStats();
     await refreshTrades();
     await refreshCityStats();
+    await refreshDailyPnlChart();
 }, 30000);
 
 // Independent 60s refresh for open positions live P&L
