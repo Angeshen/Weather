@@ -32,6 +32,7 @@ from src.core.trade_executor import (
     get_win_rate_by_city,
     get_open_trades_with_current_prices,
     exit_losing_positions,
+    reconcile_resting_orders,
 )
 from src.core.notifications import (
     notify_bot_status,
@@ -81,6 +82,13 @@ def run_scan():
     if settings.trading_mode == "live":
         try:
             client = KalshiClient()
+        except Exception:
+            pass
+
+    # Cancel any resting (unfilled) orders before scanning
+    if settings.trading_mode == "live" and client:
+        try:
+            reconcile_resting_orders(client)
         except Exception:
             pass
 
