@@ -525,7 +525,7 @@ async function refreshTrades() {
             $('tradesBody').innerHTML = '<div class="empty-state"><div class="icon">&#128202;</div><p>No trades yet</p></div>';
             return;
         }
-        let html = '<table><thead><tr><th>#</th><th>Time</th><th>Ticker</th><th>Side</th><th>Edge</th><th>Size</th><th>Status</th><th>Duration</th><th>P&L</th><th>Unrealized</th><th>Win Profit</th></tr></thead><tbody>';
+        let html = '<table><thead><tr><th>#</th><th>Time</th><th>Ticker</th><th>Mode</th><th>Side</th><th>Edge</th><th>Size</th><th>Status</th><th>Duration</th><th>P&L</th><th>Unrealized</th><th>Win Profit</th></tr></thead><tbody>';
         for (const t of trades) {
             const pnlClass = (t.pnl_usd || 0) > 0 ? 'pnl-pos' : (t.pnl_usd || 0) < 0 ? 'pnl-neg' : '';
             const pnl = t.pnl_usd != null && t.status === 'settled' ? usd(t.pnl_usd) : '—';
@@ -555,6 +555,7 @@ async function refreshTrades() {
                 <td>${t.id}</td>
                 <td>${time}</td>
                 <td>${t.ticker || '?'}</td>
+                <td style="font-size:11px;font-weight:600;color:${t.mode==='live'?'var(--green)':'var(--text-dim)'}">${(t.mode||'paper').toUpperCase()}</td>
                 <td class="${(t.direction||'').includes('ABOVE') || (t.direction||'').includes('YES') ? 'dir-above' : 'dir-below'}">${(t.side||'').toUpperCase()}</td>
                 <td>${t.edge ? pct(t.edge) : '?'}</td>
                 <td>${t.position_size_usd ? usd(t.position_size_usd) : '?'}</td>
