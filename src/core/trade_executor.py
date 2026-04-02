@@ -268,11 +268,23 @@ def execute_live_trade(signal: dict, client: KalshiClient) -> dict:
         order_id = order.get("order_id", "unknown")
 
         # Partial fill tracking: actual filled qty may differ from requested
-        filled_contracts = order.get("filled_count") or order.get("quantity_filled")
-        if filled_contracts is not None:
-            filled_contracts = int(filled_contracts)
+        # Use explicit None check — filled_count=0 means resting order (not filled)
+        _fc = order.get("filled_count")
+        if _fc is None:
+            _fc = order.get("quantity_filled")
+        if _fc is not None:
+            filled_contracts = int(_fc)
         else:
-            filled_contracts = signal["contracts"]  # assume full fill if not reported
+            filled_contracts = signal["contracts"]  # assume full fill if API doesn't report
+
+        # If order is resting (zero fill), cancel it and abort — don't record as open trade
+        order_status = order.get("status", "")
+        if filled_contracts == 0 and order_status in ("resting", "pending", ""):
+            try:
+                client.cancel_order(order_id)
+            except Exception:
+                pass
+            return {"status": "cancelled", "reason": "Order resting unfilled — cancelled to avoid phantom position", "order_id": order_id}
 
         # Fill quality: detect price slippage
         fill_price_cents = order.get("avg_price") or order.get("avg_fill_price")
@@ -455,6 +467,59 @@ def get_stats() -> dict:
 
 def _exit_loss_threshold():
     return settings.exit_loss_threshold
+
+
+def reconcile_resting_orders(client) -> list[dict]:
+    """
+    Check all open trades that have an order_id against Kalshi.
+    If the order is still resting (zero fill), cancel it and void the DB record.
+    Runs on each scan cycle to catch orders that never filled.
+    """
+    conn = get_db()
+    conn.row_factory = sqlite3.Row
+    open_trades = conn.execute(
+        "SELECT * FROM trades WHERE status = 'open' AND mode = 'live' AND order_id IS NOT NULL AND order_id != 'unknown'"
+    ).fetchall()
+    conn.close()
+
+    cancelled = []
+    for row in open_trades:
+        trade = dict(row)
+        order_id = trade["order_id"]
+        try:
+            order_resp = client.get_order(order_id)
+            order = order_resp.get("order", order_resp)
+            order_status = order.get("status", "")
+            filled = int(order.get("filled_count") or order.get("quantity_filled") or 0)
+
+            if order_status in ("resting", "pending") and filled == 0:
+                # Cancel the resting order on Kalshi
+                try:
+                    client.cancel_order(order_id)
+                except Exception:
+                    pass
+
+                # Void the trade in DB — refund cost back to bankroll
+                conn = get_db()
+                conn.execute(
+                    "UPDATE trades SET status = 'cancelled', pnl_usd = 0 WHERE id = ?",
+                    (trade["id"],)
+                )
+                conn.commit()
+                conn.close()
+
+                # Refund bankroll
+                refund = trade.get("position_size_usd", 0)
+                if refund:
+                    new_bankroll = get_current_bankroll() + refund
+                    log_bankroll(new_bankroll, f"Cancelled resting order #{order_id} on {trade['ticker']} — refunded ${refund:.2f}")
+
+                cancelled.append({"trade_id": trade["id"], "ticker": trade["ticker"], "order_id": order_id})
+
+        except Exception:
+            continue
+
+    return cancelled
 
 
 def exit_losing_positions(current_markets: list, client=None) -> list[dict]:

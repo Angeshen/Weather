@@ -23,6 +23,7 @@ from src.core.trade_executor import (
     get_stats,
     log_bankroll,
     init_db,
+    reconcile_resting_orders,
 )
 
 console = Console()
@@ -155,6 +156,15 @@ def run_scan_cycle(client: KalshiClient = None):
     """Run one full scan cycle: scan markets, fetch forecasts, evaluate edge, execute."""
     now = datetime.now(timezone.utc)
     console.rule(f"[bold]Scan @ {now.strftime('%Y-%m-%d %H:%M:%S UTC')}[/]")
+
+    # Step 0: Cancel any resting (unfilled) orders from previous cycles
+    if settings.trading_mode == "live" and client:
+        try:
+            cancelled = reconcile_resting_orders(client)
+            for c in cancelled:
+                console.print(f"  [yellow]⚠ Cancelled resting order {c['order_id']} on {c['ticker']} (unfilled)[/]")
+        except Exception as e:
+            console.print(f"  [dim]Reconcile resting orders error: {e}[/]")
 
     # Step 1: Scan markets
     console.print("[cyan]Scanning Kalshi weather markets...[/]")

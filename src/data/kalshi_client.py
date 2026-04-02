@@ -130,6 +130,21 @@ class KalshiClient:
             body["no_price"] = price_cents
         return self._post("/portfolio/orders", body=body)
 
+    def _delete(self, path: str) -> dict:
+        url = f"{self.base_url}{path}"
+        headers = self._headers("DELETE", path)
+        resp = self._client.delete(url, headers=headers)
+        resp.raise_for_status()
+        return resp.json()
+
+    def cancel_order(self, order_id: str) -> dict:
+        """Cancel a resting order by order_id."""
+        return self._delete(f"/portfolio/orders/{order_id}")
+
+    def get_order(self, order_id: str) -> dict:
+        """Get current status of an order."""
+        return self._get(f"/portfolio/orders/{order_id}")
+
     def get_positions(self) -> dict:
         return self._get("/portfolio/positions")
 
