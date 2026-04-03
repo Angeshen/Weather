@@ -267,15 +267,17 @@ def execute_live_trade(signal: dict, client: KalshiClient) -> dict:
         order = result.get("order", {})
         order_id = order.get("order_id", "unknown")
 
-        # Partial fill tracking: actual filled qty may differ from requested
-        # Use explicit None check — filled_count=0 means resting order (not filled)
-        _fc = order.get("filled_count")
-        if _fc is None:
-            _fc = order.get("quantity_filled")
-        if _fc is not None:
-            filled_contracts = int(_fc)
-        else:
-            filled_contracts = signal["contracts"]  # assume full fill if API doesn't report
+        # Partial fill tracking: Kalshi returns fill_count_fp as float string e.g. "3.00"
+        # filled_count may be int or absent; fall back chain: fill_count_fp -> filled_count -> quantity_filled
+        try:
+            raw_fc = (order.get("fill_count_fp") or order.get("filled_count")
+                      or order.get("quantity_filled"))
+            if raw_fc is not None:
+                filled_contracts = int(float(str(raw_fc)))
+            else:
+                filled_contracts = signal["contracts"]  # assume full fill if API doesn't report
+        except (ValueError, TypeError):
+            filled_contracts = signal["contracts"]
 
         # If order is resting (zero fill), cancel it and abort — don't record as open trade
         order_status = order.get("status", "")
