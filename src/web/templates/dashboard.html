@@ -182,7 +182,7 @@
     <div class="tab-bar">
         <button class="tab-btn active" onclick="switchTab('overview', this)">📊 Overview</button>
         <button class="tab-btn" id="tabPositionsBtn" onclick="switchTab('positions', this)">📂 Positions</button>
-        <button class="tab-btn" onclick="switchTab('markets', this)">🌤️ Markets</button>
+        <button class="tab-btn" id="tabMarketsBtn" onclick="switchTab('markets', this)">🌤️ Markets</button>
         <button class="tab-btn" onclick="switchTab('backtest', this)">📈 Backtest</button>
         <button class="tab-btn" onclick="switchTab('settings', this)">⚙️ Settings</button>
     </div>
@@ -702,6 +702,8 @@ function renderSignals(signals) {
 function renderMarkets(markets, signals) {
     $('marketCount').textContent = markets.length + ' markets';
     $('statMarkets').textContent = markets.length;
+    const mBtn = document.getElementById('tabMarketsBtn');
+    if (mBtn) mBtn.textContent = markets.length ? `🌤️ Markets (${markets.length})` : '🌤️ Markets';
     if (!markets.length) {
         $('marketsBody').innerHTML = '<div class="empty-state"><div class="icon">&#127782;&#65039;</div><p>No open markets found</p></div>';
         return;
