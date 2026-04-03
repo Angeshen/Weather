@@ -72,6 +72,38 @@ _CITIES = {
     "DAL": {"name": "Dallas", "lat": 32.7767, "lon": -96.7970, "nws_station": "KDFW"},
     "ATL": {"name": "Atlanta", "lat": 33.7490, "lon": -84.3880, "nws_station": "KATL"},
     "PHX": {"name": "Phoenix", "lat": 33.4484, "lon": -112.0740, "nws_station": "KPHX"},
+    "HOU": {"name": "Houston", "lat": 29.7604, "lon": -95.3698, "nws_station": "KHOU"},
+    "BOS": {"name": "Boston", "lat": 42.3601, "lon": -71.0589, "nws_station": "KBOS"},
+    "DC": {"name": "Washington DC", "lat": 38.9072, "lon": -77.0369, "nws_station": "KDCA"},
+    "PHI": {"name": "Philadelphia", "lat": 39.9526, "lon": -75.1652, "nws_station": "KPHL"},
+}
+
+# KXHIGHT series — active high temp series with T-suffix (HOU, PHX, BOS, DAL, DC, SEA, PHI)
+_KXHIGHT_SUFFIX_MAP = {
+    "HOU": _CITIES["HOU"],
+    "PHX": _CITIES["PHX"],
+    "BOS": _CITIES["BOS"],
+    "DAL": _CITIES["DAL"],
+    "DC": _CITIES["DC"],
+    "SEA": _CITIES["SEA"],
+    "PHI": _CITIES["PHI"],  # KXHIGHPHIL maps to PHI suffix via KXHIGHPHIL below
+}
+
+# KXLOWT series — active low temp series (NYC, CHI, MIA, LAX, DEN, HOU, BOS, DC, MIA)
+_KXLOWT_SUFFIX_MAP = {
+    "NYC": _CITIES["NY"],
+    "CHI": _CITIES["CHI"],
+    "MIA": _CITIES["MIA"],
+    "LAX": _CITIES["LAX"],
+    "DEN": _CITIES["DEN"],
+    "SEA": _CITIES["SEA"],
+    "DAL": _CITIES["DAL"],
+    "ATL": _CITIES["ATL"],
+    "PHX": _CITIES["PHX"],
+    "HOU": _CITIES["HOU"],
+    "BOS": _CITIES["BOS"],
+    "DC": _CITIES["DC"],
+    "PHI": _CITIES["PHI"],
 }
 
 # Map every series ticker to its city + market type
@@ -80,9 +112,15 @@ for _suffix, _city in _CITIES.items():
     CITY_CONFIG[f"KXHIGH{_suffix}"] = {**_city, "market_type": "high_temp"}
     CITY_CONFIG[f"KXLOW{_suffix}"] = {**_city, "market_type": "low_temp"}
     CITY_CONFIG[f"KXRAIN{_suffix}"] = {**_city, "market_type": "precipitation"}
+for _suffix, _city in _KXHIGHT_SUFFIX_MAP.items():
+    CITY_CONFIG[f"KXHIGHT{_suffix}"] = {**_city, "market_type": "high_temp"}
+for _suffix, _city in _KXLOWT_SUFFIX_MAP.items():
+    CITY_CONFIG[f"KXLOWT{_suffix}"] = {**_city, "market_type": "low_temp"}
+# Explicit alias for KXHIGHPHIL (confirmed active)
+CITY_CONFIG["KXHIGHPHIL"] = {**_CITIES["PHI"], "market_type": "high_temp"}
 
 # Known series prefixes for ticker parsing
-SERIES_PREFIXES = ["KXHIGH", "KXLOW", "KXRAIN"]
+SERIES_PREFIXES = ["KXHIGHT", "KXHIGH", "KXLOWT", "KXLOW", "KXRAIN"]
 
 
 settings = Settings()

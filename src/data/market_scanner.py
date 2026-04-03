@@ -140,10 +140,24 @@ def discover_active_series() -> list[str]:
         with httpx.Client(timeout=15.0) as http:
             # Check all possible series combinations we know about
             candidates = []
+            standard_suffixes = ["NY", "CHI", "MIA", "LAX", "DEN",
+                                  "SEA", "DAL", "ATL", "PHX", "HOU", "BOS", "PHI", "DC"]
+            kxhight_suffixes = ["HOU", "PHX", "BOS", "DAL", "DC", "SEA", "PHI", "ATL",
+                                 "NY", "CHI", "MIA", "LAX", "DEN"]
+            kxlowt_suffixes = ["NYC", "CHI", "MIA", "LAX", "DEN",
+                               "SEA", "DAL", "ATL", "PHX", "HOU", "BOS", "DC", "PHI"]
+            # Also add explicit known tickers that don't follow prefix+suffix pattern
+            extras = ["KXHIGHPHIL"]
             for prefix in SERIES_PREFIXES:
-                for suffix in ["NY", "CHI", "MIA", "LAX", "DEN",
-                               "SEA", "DAL", "ATL", "PHX", "HOU", "BOS", "PHI"]:
+                if prefix == "KXHIGHT":
+                    suffixes = kxhight_suffixes
+                elif prefix == "KXLOWT":
+                    suffixes = kxlowt_suffixes
+                else:
+                    suffixes = standard_suffixes
+                for suffix in suffixes:
                     candidates.append(f"{prefix}{suffix}")
+            candidates.extend(extras)
 
             for series in candidates:
                 try:
