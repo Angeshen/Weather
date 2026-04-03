@@ -38,12 +38,16 @@ def notify_trade(signal: dict, result: dict):
     unit = signal.get("unit", "°F")
     market_type = signal.get("market_type", "high_temp")
     type_label = {"high_temp": "High Temp", "low_temp": "Low Temp", "precipitation": "Rain"}.get(market_type, market_type)
-    contracts = signal.get('contracts', 0)
-    cost = signal.get('position_size_usd', 0)
-    win_target = round(contracts * 1.0 - cost, 2) if contracts and cost else 0
+    requested_contracts = signal.get('contracts', 0)
+    filled_contracts = result.get('filled_contracts', requested_contracts)
+    contracts = filled_contracts
+    cost = round(filled_contracts * signal.get('market_price', 0), 2)
+    win_target = round(filled_contracts * 1.0 - cost, 2) if filled_contracts and cost else 0
     days = signal.get('days_to_expiry', '?')
     days_str = f"same-day" if days == 0 else f"{days}d"
     entry_c = int(signal['market_price'] * 100)
+    partial = filled_contracts != requested_contracts
+    fill_str = f"⚠️ Partial fill: {filled_contracts}/{requested_contracts}" if partial else f"{contracts} contracts"
 
     text = (
         f"🔔 <b>Trade Placed</b> [{mode}] #{trade_id}\n"
@@ -53,7 +57,7 @@ def notify_trade(signal: dict, result: dict):
         f"\n"
         f"Model: {signal['model_prob']*100:.1f}%  vs  Market: {entry_c}¢\n"
         f"⚡ Edge: <b>{signal['edge']*100:.1f}%</b> | Confidence: {signal.get('confidence', 0)*100:.1f}%\n"
-        f"💰 {contracts} contracts × {entry_c}¢ = <b>${cost:.2f}</b>\n"
+        f"💰 {fill_str} × {entry_c}¢ = <b>${cost:.2f}</b>\n"
         f"🏆 Win target: <b>${win_target:,.2f}</b>\n"
         f"🌡️ Forecast: {signal.get('forecast_mean', '?')}{unit} ({signal.get('forecast_min', '?')}–{signal.get('forecast_max', '?')})\n"
         f"👥 Ensemble: {signal.get('n_members', '?')} members, {signal.get('n_above', '?')} above threshold"
