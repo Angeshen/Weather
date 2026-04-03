@@ -619,7 +619,15 @@ def exit_losing_positions(current_markets: list, client=None) -> list[dict]:
             if settings.trading_mode == "live" and client:
                 try:
                     sell_price_cents = int(current_bid * 100)
-                    client.sell_order(ticker, side, contracts, sell_price_cents)
+                    sell_resp = client.sell_order(ticker, side, contracts, sell_price_cents)
+                    sell_order = sell_resp.get("order", {})
+                    # Use actual fill price if available, else fall back to bid estimate
+                    avg_fill = sell_order.get("avg_price") or sell_order.get("avg_fill_price")
+                    if avg_fill:
+                        actual_exit_price = int(avg_fill) / 100.0
+                        current_value = actual_exit_price * contracts
+                        realized_pnl = round(current_value - cost, 2)
+                        gain_pct = (actual_exit_price - entry_price) / max_payout_per_contract * 100 if max_payout_per_contract > 0 else 0
                 except Exception as e:
                     notify_order_error(f"Profit exit order failed for {ticker}: {e}")
                     continue
@@ -658,6 +666,11 @@ def exit_losing_positions(current_markets: list, client=None) -> list[dict]:
                 if not order.get("order_id") and not order.get("status"):
                     notify_order_error(f"Exit order response missing confirmation for {ticker}: {resp}")
                     continue
+                # Use actual fill price if available
+                avg_fill = order.get("avg_price") or order.get("avg_fill_price")
+                if avg_fill:
+                    actual_exit_price = int(avg_fill) / 100.0
+                    realized_pnl = round(actual_exit_price * contracts - cost, 2)
             except Exception as e:
                 notify_order_error(f"Exit order failed for {ticker}: {e}")
                 continue

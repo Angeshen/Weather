@@ -116,19 +116,31 @@ class KalshiClient:
         return self._post("/portfolio/orders", body=body)
 
     def sell_order(self, ticker: str, side: str, quantity: int, price_cents: int) -> dict:
-        """Sell (exit) an existing position at the given price."""
+        """Sell (exit) an existing position. Tries market order first, falls back to aggressive limit."""
         body = {
             "ticker": ticker,
             "action": "sell",
             "side": side,
             "count": quantity,
-            "type": "limit",
+            "type": "market",
         }
-        if side == "yes":
-            body["yes_price"] = price_cents
-        else:
-            body["no_price"] = price_cents
-        return self._post("/portfolio/orders", body=body)
+        try:
+            return self._post("/portfolio/orders", body=body)
+        except Exception:
+            # Kalshi may not support market sells — fall back to aggressive limit (accept up to 5¢ slippage)
+            aggressive_price = max(1, price_cents - 5)
+            limit_body = {
+                "ticker": ticker,
+                "action": "sell",
+                "side": side,
+                "count": quantity,
+                "type": "limit",
+            }
+            if side == "yes":
+                limit_body["yes_price"] = aggressive_price
+            else:
+                limit_body["no_price"] = aggressive_price
+            return self._post("/portfolio/orders", body=limit_body)
 
     def _delete(self, path: str) -> dict:
         url = f"{self.base_url}{path}"
