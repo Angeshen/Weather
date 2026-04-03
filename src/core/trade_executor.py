@@ -490,9 +490,18 @@ def reconcile_resting_orders(client) -> list[dict]:
             order_resp = client.get_order(order_id)
             order = order_resp.get("order", order_resp)
             order_status = order.get("status", "")
-            filled = int(order.get("filled_count") or order.get("quantity_filled") or 0)
 
-            if order_status in ("resting", "pending", "canceled", "cancelled") and filled == 0:
+            # Parse fill count — Kalshi returns fill_count_fp as string e.g. "0.00" or "3.00"
+            try:
+                raw_fill = (order.get("fill_count_fp") or order.get("filled_count")
+                            or order.get("quantity_filled") or "0")
+                filled = float(str(raw_fill))
+            except (ValueError, TypeError):
+                filled = 1  # If we can't parse, assume filled — don't cancel
+
+            # Only cancel orders that are explicitly resting/pending with zero fill
+            # Never cancel if status is executed, filled, or unknown
+            if order_status in ("resting", "pending") and filled == 0:
                 # Cancel the resting order on Kalshi
                 try:
                     client.cancel_order(order_id)
