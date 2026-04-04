@@ -176,6 +176,10 @@ def evaluate_market(market: dict, forecast: dict, bankroll: float) -> dict | Non
     # Skip markets too far out — GFS accuracy degrades fast beyond 2 days
     if days_to_expiry > int(settings.max_days_to_expiry):
         return None
+
+    # Skip same-day markets — forecast is stale by expiry day, market has already priced in current conditions
+    if days_to_expiry <= 0:
+        return None
     market_type = market.get("market_type", "high_temp")
     unit = market.get("unit", "°F")
     yes_label, no_label = _direction_labels(market_type)
