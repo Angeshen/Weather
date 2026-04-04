@@ -832,7 +832,7 @@ def get_forecast_accuracy_stats() -> list[dict]:
     ]
 
 
-def get_open_trades_with_current_prices(last_markets: list) -> list[dict]:
+def get_open_trades_with_current_prices(last_markets: list, client=None) -> list[dict]:
     """Get open trades enriched with current market price for unrealized P&L."""
     conn = get_db()
     conn.row_factory = sqlite3.Row
@@ -850,6 +850,22 @@ def get_open_trades_with_current_prices(last_markets: list) -> list[dict]:
         ticker = trade["ticker"]
         current = price_lookup.get(ticker, {})
 
+        # If not in scan results, fetch directly from Kalshi API
+        if not current and client:
+            try:
+                resp = client.get_market(ticker)
+                mkt = resp.get("market", resp)
+                if mkt:
+                    current = {
+                        "yes_bid": (mkt.get("yes_bid") or 0) / 100.0 if isinstance(mkt.get("yes_bid"), int) else mkt.get("yes_bid") or 0,
+                        "yes_ask": (mkt.get("yes_ask") or 0) / 100.0 if isinstance(mkt.get("yes_ask"), int) else mkt.get("yes_ask") or 0,
+                        "no_bid": (mkt.get("no_bid") or 0) / 100.0 if isinstance(mkt.get("no_bid"), int) else mkt.get("no_bid") or 0,
+                        "no_ask": (mkt.get("no_ask") or 0) / 100.0 if isinstance(mkt.get("no_ask"), int) else mkt.get("no_ask") or 0,
+                        "volume": mkt.get("volume"),
+                    }
+            except Exception:
+                pass
+
         # Current market price for our side
         if trade.get("side") == "yes":
             current_price = current.get("yes_ask") or current.get("yes_bid")
@@ -860,7 +876,6 @@ def get_open_trades_with_current_prices(last_markets: list) -> list[dict]:
         contracts = trade.get("contracts", 0)
 
         if current_price and entry_price and contracts:
-            # Unrealized P&L = (current_price - entry_price) * contracts
             unrealized_pnl = round((current_price - entry_price) * contracts, 2)
         else:
             unrealized_pnl = None

@@ -637,7 +637,15 @@ def api_city_stats():
 @app.route("/api/open-trades")
 def api_open_trades():
     """Open trades with unrealized P&L based on last scan prices."""
-    trades = get_open_trades_with_current_prices(bot_state.get("last_markets", []))
+    client = None
+    if settings.trading_mode == "live":
+        try:
+            client = KalshiClient()
+        except Exception:
+            pass
+    trades = get_open_trades_with_current_prices(bot_state.get("last_markets", []), client=client)
+    if client:
+        client.close()
     return jsonify(trades)
 
 
@@ -716,7 +724,7 @@ def _daily_summary_loop():
 
             # Unrealized P&L from open positions
             try:
-                open_enriched = get_open_trades_with_current_prices(bot_state.get("last_markets", []))
+                open_enriched = get_open_trades_with_current_prices(bot_state.get("last_markets", []), client=None)
                 unrealized = sum(t["unrealized_pnl"] for t in open_enriched if t.get("unrealized_pnl") is not None)
                 stats["unrealized_pnl"] = round(unrealized, 2)
             except Exception:
