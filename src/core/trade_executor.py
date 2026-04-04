@@ -134,6 +134,27 @@ def log_bankroll(bankroll: float, event: str = ""):
     conn.close()
 
 
+def _update_daily_pnl(pnl: float, won: bool, trade_date: str = None):
+    """Record a P&L entry in the daily_pnl table."""
+    if trade_date is None:
+        trade_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    conn = get_db()
+    existing = conn.execute("SELECT * FROM daily_pnl WHERE date = ?", (trade_date,)).fetchone()
+    if existing:
+        conn.execute(
+            "UPDATE daily_pnl SET total_pnl = total_pnl + ?, trades_count = trades_count + 1, "
+            "wins = wins + ?, losses = losses + ? WHERE date = ?",
+            (pnl, 1 if won else 0, 0 if won else 1, trade_date)
+        )
+    else:
+        conn.execute(
+            "INSERT INTO daily_pnl (date, total_pnl, trades_count, wins, losses) VALUES (?, ?, 1, ?, ?)",
+            (trade_date, pnl, 1 if won else 0, 0 if won else 1)
+        )
+    conn.commit()
+    conn.close()
+
+
 def get_daily_loss_today() -> float:
     """Get total P&L for today (negative = losses)."""
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -696,6 +717,7 @@ def exit_losing_positions(current_markets: list, client=None) -> list[dict]:
                 )
             except Exception:
                 pass
+            _update_daily_pnl(realized_pnl, won=True)
             exited.append({"ticker": ticker, "pnl": realized_pnl, "gain_pct": gain_pct, "exit_type": "profit"})
             continue
 
@@ -735,6 +757,7 @@ def exit_losing_positions(current_markets: list, client=None) -> list[dict]:
         bankroll = get_current_bankroll() + cost + realized_pnl
         log_bankroll(bankroll, f"Exited {ticker} early: {loss_pct*100:.0f}% loss")
 
+        _update_daily_pnl(realized_pnl, won=False)
         notify_early_exit(ticker, entry_price, current_bid, realized_pnl, loss_pct,
                           city=trade.get("city", ""), contracts=contracts, cost=cost)
         exited.append({"ticker": ticker, "pnl": realized_pnl, "loss_pct": loss_pct, "exit_type": "loss"})
