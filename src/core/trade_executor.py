@@ -856,12 +856,18 @@ def get_open_trades_with_current_prices(last_markets: list, client=None) -> list
                 resp = client.get_market(ticker)
                 mkt = resp.get("market", resp)
                 if mkt:
+                    def _p(key):
+                        v = mkt.get(key) or mkt.get(key.replace("_dollars", ""))
+                        try:
+                            return float(v) if v is not None else None
+                        except (ValueError, TypeError):
+                            return None
                     current = {
-                        "yes_bid": (mkt.get("yes_bid") or 0) / 100.0 if isinstance(mkt.get("yes_bid"), int) else mkt.get("yes_bid") or 0,
-                        "yes_ask": (mkt.get("yes_ask") or 0) / 100.0 if isinstance(mkt.get("yes_ask"), int) else mkt.get("yes_ask") or 0,
-                        "no_bid": (mkt.get("no_bid") or 0) / 100.0 if isinstance(mkt.get("no_bid"), int) else mkt.get("no_bid") or 0,
-                        "no_ask": (mkt.get("no_ask") or 0) / 100.0 if isinstance(mkt.get("no_ask"), int) else mkt.get("no_ask") or 0,
-                        "volume": mkt.get("volume"),
+                        "yes_bid": _p("yes_bid_dollars"),
+                        "yes_ask": _p("yes_ask_dollars"),
+                        "no_bid": _p("no_bid_dollars"),
+                        "no_ask": _p("no_ask_dollars"),
+                        "volume": float(mkt.get("volume_fp") or mkt.get("volume") or 0),
                     }
             except Exception:
                 pass
