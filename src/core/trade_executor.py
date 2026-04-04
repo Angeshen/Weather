@@ -684,7 +684,8 @@ def exit_losing_positions(current_markets: list, client=None) -> list[dict]:
             )
             conn.commit()
             conn.close()
-            bankroll = get_current_bankroll() + realized_pnl
+            # Cost was deducted at placement; add back cost + pnl = sell proceeds
+            bankroll = get_current_bankroll() + cost + realized_pnl
             log_bankroll(bankroll, f"Profit exit {ticker}: {gain_pct:.0f}% of max gain locked")
             try:
                 from src.core.notifications import notify_profit_exit
@@ -730,7 +731,8 @@ def exit_losing_positions(current_markets: list, client=None) -> list[dict]:
         conn.commit()
         conn.close()
 
-        bankroll = get_current_bankroll() + realized_pnl
+        # Cost was deducted at placement; add back cost + pnl = sell proceeds
+        bankroll = get_current_bankroll() + cost + realized_pnl
         log_bankroll(bankroll, f"Exited {ticker} early: {loss_pct*100:.0f}% loss")
 
         notify_early_exit(ticker, entry_price, current_bid, realized_pnl, loss_pct,

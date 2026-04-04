@@ -223,9 +223,22 @@ def settle_open_trades() -> dict:
 
     conn.commit()
 
-    # Update bankroll
-    if total_pnl != 0:
-        new_bankroll = get_current_bankroll() + total_pnl
+    # Update bankroll: cost was already deducted at trade placement.
+    # On settlement we receive back: $1*contracts on win, $0 on loss.
+    # So net bankroll change = sum of settlement proceeds for each trade.
+    # Win proceeds  = contracts * $1 (pnl = contracts - cost, so proceeds = cost + pnl)
+    # Loss proceeds = $0            (pnl = -cost, so proceeds = cost + pnl = 0)
+    if settled > 0:
+        total_proceeds = 0.0
+        for r in results:
+            trade_cost = 0.0
+            for t in open_trades:
+                t2 = dict(t)
+                if t2["id"] == r["trade_id"]:
+                    trade_cost = t2.get("position_size_usd", 0)
+                    break
+            total_proceeds += trade_cost + r["pnl"]  # cost + pnl = actual proceeds received
+        new_bankroll = get_current_bankroll() + total_proceeds
         log_bankroll(new_bankroll, f"Settled {settled} trades, P&L: ${total_pnl:+.2f}")
 
     conn.close()
