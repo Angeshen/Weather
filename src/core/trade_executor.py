@@ -267,26 +267,41 @@ def execute_live_trade(signal: dict, client: KalshiClient) -> dict:
         order = result.get("order", {})
         order_id = order.get("order_id", "unknown")
 
-        # Partial fill tracking: Kalshi returns fill_count_fp as float string e.g. "3.00"
-        # filled_count may be int or absent; fall back chain: fill_count_fp -> filled_count -> quantity_filled
-        try:
-            raw_fc = (order.get("fill_count_fp") or order.get("filled_count")
-                      or order.get("quantity_filled"))
-            if raw_fc is not None:
-                filled_contracts = int(float(str(raw_fc)))
-            else:
-                filled_contracts = signal["contracts"]  # assume full fill if API doesn't report
-        except (ValueError, TypeError):
-            filled_contracts = signal["contracts"]
+        def _parse_fill(o: dict) -> int:
+            try:
+                raw = (o.get("fill_count_fp") or o.get("filled_count") or o.get("quantity_filled"))
+                return int(float(str(raw))) if raw is not None else -1
+            except (ValueError, TypeError):
+                return -1
 
-        # If order is resting (zero fill), cancel it and abort — don't record as open trade
+        filled_contracts = _parse_fill(order)
         order_status = order.get("status", "")
-        if filled_contracts == 0 and order_status in ("resting", "pending", ""):
+
+        # Kalshi fills async — if immediate response shows 0 or unknown, wait 2s and re-query
+        if filled_contracts <= 0 and order_id != "unknown":
+            import time as _time
+            _time.sleep(2)
+            try:
+                recheck = client.get_order(order_id)
+                recheck_order = recheck.get("order", recheck)
+                refilled = _parse_fill(recheck_order)
+                if refilled >= 0:
+                    filled_contracts = refilled
+                order_status = recheck_order.get("status", order_status)
+            except Exception:
+                pass
+
+        # Only cancel if zero fill — let partial fills complete naturally for more upside
+        if filled_contracts == 0 and order_status in ("resting", "pending"):
             try:
                 client.cancel_order(order_id)
             except Exception:
                 pass
             return {"status": "cancelled", "reason": "Order resting unfilled — cancelled to avoid phantom position", "order_id": order_id}
+
+        # If we still couldn't determine fill count, assume full fill (safer than cancelling a filled order)
+        if filled_contracts < 0:
+            filled_contracts = signal["contracts"]
 
         # Fill quality: detect price slippage
         fill_price_cents = order.get("avg_price") or order.get("avg_fill_price")
@@ -500,6 +515,26 @@ def reconcile_resting_orders(client) -> list[dict]:
                 filled = float(str(raw_fill))
             except (ValueError, TypeError):
                 filled = 1  # If we can't parse, assume filled — don't cancel
+
+            filled_int = int(filled)
+
+            # Sync fill count: if actual fill differs from DB, update contracts/cost
+            db_contracts = trade.get("contracts", 0) or 0
+            if filled_int > 0 and filled_int != db_contracts:
+                market_price = trade.get("market_price") or 0
+                actual_cost = round(filled_int * market_price, 2)
+                old_cost = trade.get("position_size_usd") or 0
+                cost_diff = actual_cost - old_cost
+                conn = get_db()
+                conn.execute(
+                    "UPDATE trades SET contracts=?, filled_contracts=?, position_size_usd=? WHERE id=?",
+                    (filled_int, filled_int, actual_cost, trade["id"])
+                )
+                conn.commit()
+                conn.close()
+                if abs(cost_diff) >= 0.01:
+                    new_br = get_current_bankroll() - cost_diff
+                    log_bankroll(new_br, f"Synced fill for #{trade['id']} {trade['ticker']}: {db_contracts}→{filled_int} contracts, cost {old_cost:.2f}→{actual_cost:.2f}")
 
             # Only cancel orders that are explicitly resting/pending with zero fill
             # Never cancel if status is executed, filled, or unknown
