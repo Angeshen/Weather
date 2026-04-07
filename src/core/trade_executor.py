@@ -598,6 +598,46 @@ def reconcile_resting_orders(client) -> list[dict]:
     return cancelled
 
 
+def fetch_open_position_prices(client) -> list[dict]:
+    """
+    Fetch current prices for just the open positions directly from Kalshi.
+    Lightweight — only 1 API call per open trade (~5 calls vs full scan ~30+).
+    Returns list of market dicts compatible with exit_losing_positions.
+    """
+    conn = get_db()
+    conn.row_factory = sqlite3.Row
+    open_trades = conn.execute("SELECT ticker FROM trades WHERE status = 'open'").fetchall()
+    conn.close()
+
+    markets = []
+    for row in open_trades:
+        ticker = row["ticker"]
+        try:
+            resp = client.get_market(ticker)
+            mkt = resp.get("market", resp)
+            if not mkt:
+                continue
+
+            def _p(key):
+                v = mkt.get(key) or mkt.get(key.replace("_dollars", ""))
+                try:
+                    return float(v) if v is not None else None
+                except (ValueError, TypeError):
+                    return None
+
+            markets.append({
+                "ticker": ticker,
+                "yes_bid": _p("yes_bid_dollars"),
+                "yes_ask": _p("yes_ask_dollars"),
+                "no_bid": _p("no_bid_dollars"),
+                "no_ask": _p("no_ask_dollars"),
+                "volume": float(mkt.get("volume_fp") or mkt.get("volume") or 0),
+            })
+        except Exception:
+            continue
+    return markets
+
+
 def exit_losing_positions(current_markets: list, client=None) -> list[dict]:
     """
     Check open trades against current market prices.

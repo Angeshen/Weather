@@ -32,6 +32,7 @@ from src.core.trade_executor import (
     get_win_rate_by_city,
     get_open_trades_with_current_prices,
     exit_losing_positions,
+    fetch_open_position_prices,
     reconcile_resting_orders,
 )
 from src.core.notifications import (
@@ -354,10 +355,21 @@ def bot_loop():
         in_model_window = minutes_since_00z <= 90 or minutes_since_12z <= 90
         sleep_secs = max(60, settings.scan_interval_seconds // 2) if in_model_window else settings.scan_interval_seconds
 
+        # Sleep between scans, but check exits every 60s using live Kalshi prices
+        elapsed = 0
         for _ in range(sleep_secs):
             if not bot_state["running"]:
                 break
             time.sleep(1)
+            elapsed += 1
+            # Fast exit monitor — fetch fresh prices for open positions every 60s
+            if elapsed % 60 == 0 and settings.trading_mode == "live" and client:
+                try:
+                    fresh_markets = fetch_open_position_prices(client)
+                    if fresh_markets:
+                        exit_losing_positions(fresh_markets, client)
+                except Exception:
+                    pass
 
     if client:
         client.close()
