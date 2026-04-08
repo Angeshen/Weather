@@ -3,6 +3,7 @@ Flask web dashboard for the Kalshi Weather Trading Bot.
 Provides a GUI to monitor, scan, and control the bot.
 """
 
+import sqlite3
 import threading
 import time
 from datetime import datetime, timezone
@@ -644,6 +645,90 @@ def api_trade_note():
 def api_city_stats():
     """Win rate and P&L broken down by city."""
     return jsonify(get_win_rate_by_city())
+
+
+@app.route("/api/performance")
+def api_performance():
+    """Detailed performance analytics for the Performance dashboard tab."""
+    from src.core.trade_executor import get_db
+    conn = get_db()
+    conn.row_factory = sqlite3.Row
+
+    # All settled trades
+    trades = [dict(r) for r in conn.execute(
+        "SELECT * FROM trades WHERE status='settled' ORDER BY id ASC"
+    ).fetchall()]
+
+    # By market type (high vs low)
+    by_type = {}
+    for t in trades:
+        ticker = t.get("ticker", "")
+        mtype = "Low Temp" if "LOWT" in ticker else "High Temp"
+        if mtype not in by_type:
+            by_type[mtype] = {"total": 0, "wins": 0, "pnl": 0.0}
+        by_type[mtype]["total"] += 1
+        if (t.get("pnl_usd") or 0) > 0:
+            by_type[mtype]["wins"] += 1
+        by_type[mtype]["pnl"] = round(by_type[mtype]["pnl"] + (t.get("pnl_usd") or 0), 2)
+
+    type_stats = []
+    for name, data in by_type.items():
+        type_stats.append({
+            "type": name, "total": data["total"], "wins": data["wins"],
+            "losses": data["total"] - data["wins"],
+            "win_rate": round(data["wins"] / data["total"] * 100, 1) if data["total"] else 0,
+            "pnl": data["pnl"],
+        })
+
+    # Forecast error analysis
+    forecast_errors = []
+    for t in trades:
+        fm = t.get("forecast_mean")
+        at = t.get("actual_temp")
+        if fm is not None and at is not None:
+            error = round(fm - at, 1)
+            forecast_errors.append({
+                "id": t["id"], "city": t.get("city", "?"), "ticker": t.get("ticker", ""),
+                "forecast": fm, "actual": at, "error": error,
+                "abs_error": abs(error), "pnl": t.get("pnl_usd", 0),
+                "won": (t.get("pnl_usd") or 0) > 0,
+                "side": t.get("side", ""), "direction": t.get("direction", ""),
+                "threshold": t.get("threshold_f"),
+                "gap": round(abs(fm - (t.get("threshold_f") or fm)), 1),
+            })
+
+    avg_error = round(sum(e["abs_error"] for e in forecast_errors) / len(forecast_errors), 1) if forecast_errors else 0
+    avg_error_wins = [e for e in forecast_errors if e["won"]]
+    avg_error_losses = [e for e in forecast_errors if not e["won"]]
+    avg_err_w = round(sum(e["abs_error"] for e in avg_error_wins) / len(avg_error_wins), 1) if avg_error_wins else 0
+    avg_err_l = round(sum(e["abs_error"] for e in avg_error_losses) / len(avg_error_losses), 1) if avg_error_losses else 0
+
+    # Cumulative P&L series
+    cum_pnl = []
+    running = 0.0
+    for t in trades:
+        running = round(running + (t.get("pnl_usd") or 0), 2)
+        cum_pnl.append({"id": t["id"], "city": t.get("city", "?"), "pnl": running})
+
+    # Edge vs outcome
+    edge_analysis = []
+    for t in trades:
+        edge_analysis.append({
+            "id": t["id"], "edge": t.get("edge", 0), "pnl": t.get("pnl_usd", 0),
+            "won": (t.get("pnl_usd") or 0) > 0, "size": t.get("position_size_usd", 0),
+        })
+
+    conn.close()
+    return jsonify({
+        "type_stats": type_stats,
+        "forecast_errors": forecast_errors,
+        "avg_error": avg_error,
+        "avg_error_wins": avg_err_w,
+        "avg_error_losses": avg_err_l,
+        "cumulative_pnl": cum_pnl,
+        "edge_analysis": edge_analysis,
+        "total_trades": len(trades),
+    })
 
 
 @app.route("/api/open-trades")

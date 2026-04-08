@@ -183,6 +183,7 @@
         <button class="tab-btn active" onclick="switchTab('overview', this)">📊 Overview</button>
         <button class="tab-btn" id="tabPositionsBtn" onclick="switchTab('positions', this)">📂 Positions</button>
         <button class="tab-btn" id="tabMarketsBtn" onclick="switchTab('markets', this)">🌤️ Markets</button>
+        <button class="tab-btn" onclick="switchTab('performance', this)">📉 Performance</button>
         <button class="tab-btn" onclick="switchTab('backtest', this)">📈 Backtest</button>
         <button class="tab-btn" onclick="switchTab('settings', this)">⚙️ Settings</button>
     </div>
@@ -260,6 +261,47 @@
                 </div>
                 <div class="panel-body" id="marketsBody">
                     <div class="empty-state"><div class="icon">&#127782;&#65039;</div><p>Markets will appear after scanning</p></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB: Performance -->
+        <div class="tab-content" id="tab-performance">
+            <!-- Summary cards -->
+            <div class="stats-grid" id="perfSummary" style="margin-bottom:16px;">
+                <div class="stat-card"><div class="label">Avg Forecast Error</div><div class="value cyan" id="perfAvgError">—</div></div>
+                <div class="stat-card"><div class="label">Avg Error (Wins)</div><div class="value green" id="perfAvgErrW">—</div></div>
+                <div class="stat-card"><div class="label">Avg Error (Losses)</div><div class="value red" id="perfAvgErrL">—</div></div>
+                <div class="stat-card"><div class="label">Settled Trades</div><div class="value" id="perfTotalTrades">0</div></div>
+            </div>
+            <!-- High vs Low breakdown -->
+            <div class="panel">
+                <div class="panel-header"><span>Win Rate by Market Type</span></div>
+                <div class="panel-body" id="perfTypeBody">
+                    <div class="empty-state"><div class="icon">📊</div><p>Loading...</p></div>
+                </div>
+            </div>
+            <div class="two-col">
+                <!-- Cumulative P&L chart -->
+                <div class="panel">
+                    <div class="panel-header"><span>Cumulative P&amp;L</span></div>
+                    <div class="panel-body" style="max-height:none;overflow:visible;">
+                        <div class="chart-container"><canvas id="perfPnlChart"></canvas></div>
+                    </div>
+                </div>
+                <!-- Edge vs Outcome scatter -->
+                <div class="panel">
+                    <div class="panel-header"><span>Edge vs Outcome</span></div>
+                    <div class="panel-body" style="max-height:none;overflow:visible;">
+                        <div class="chart-container"><canvas id="perfEdgeChart"></canvas></div>
+                    </div>
+                </div>
+            </div>
+            <!-- Forecast error table -->
+            <div class="panel">
+                <div class="panel-header"><span>Forecast Error Breakdown</span><span class="last-scan" id="perfErrorCount">0 trades</span></div>
+                <div class="panel-body" id="perfErrorBody">
+                    <div class="empty-state"><div class="icon">🌡️</div><p>No forecast data yet</p></div>
                 </div>
             </div>
         </div>
@@ -1209,6 +1251,118 @@ async function runBacktest() {
     btn.textContent = 'Run Backtest';
 }
 
+// Performance tab
+let _perfPnlChart = null, _perfEdgeChart = null;
+async function refreshPerformance() {
+    try {
+        const d = await api('/api/performance');
+        // Summary cards
+        $('perfAvgError').textContent = d.avg_error + '°F';
+        $('perfAvgErrW').textContent = d.avg_error_wins + '°F';
+        $('perfAvgErrL').textContent = d.avg_error_losses + '°F';
+        $('perfTotalTrades').textContent = d.total_trades;
+
+        // Type breakdown table
+        if (d.type_stats && d.type_stats.length) {
+            let html = '<table><thead><tr><th>Type</th><th>Trades</th><th>W</th><th>L</th><th>Win Rate</th><th>P&L</th></tr></thead><tbody>';
+            for (const s of d.type_stats) {
+                const pClass = s.pnl >= 0 ? 'pnl-pos' : 'pnl-neg';
+                const wrClass = s.win_rate >= 50 ? 'edge-high' : 'pnl-neg';
+                html += `<tr><td><strong>${s.type}</strong></td><td>${s.total}</td><td style="color:var(--green)">${s.wins}</td><td style="color:var(--red)">${s.losses}</td><td class="${wrClass}">${s.win_rate}%</td><td class="${pClass}">${usd(s.pnl)}</td></tr>`;
+            }
+            html += '</tbody></table>';
+            $('perfTypeBody').innerHTML = html;
+        }
+
+        // Cumulative P&L line chart
+        if (d.cumulative_pnl && d.cumulative_pnl.length) {
+            const ctx = document.getElementById('perfPnlChart');
+            if (ctx) {
+                if (_perfPnlChart) _perfPnlChart.destroy();
+                _perfPnlChart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: d.cumulative_pnl.map(p => '#' + p.id + ' ' + p.city),
+                        datasets: [{
+                            label: 'Cumulative P&L',
+                            data: d.cumulative_pnl.map(p => p.pnl),
+                            borderColor: '#4ecdc4',
+                            backgroundColor: d.cumulative_pnl.map(p => p.pnl >= 0 ? 'rgba(0,214,143,0.15)' : 'rgba(255,107,107,0.15)'),
+                            fill: true, tension: 0.3, pointRadius: 4,
+                            pointBackgroundColor: d.cumulative_pnl.map(p => p.pnl >= 0 ? '#00d68f' : '#ff6b6b'),
+                        }]
+                    },
+                    options: {
+                        responsive: true, maintainAspectRatio: false,
+                        plugins: { legend: { display: false } },
+                        scales: {
+                            x: { ticks: { color: '#8b8fa3', font: { size: 9 }, maxRotation: 45 }, grid: { color: '#2d3140' } },
+                            y: { ticks: { color: '#8b8fa3', callback: v => '$' + v }, grid: { color: '#2d3140' } }
+                        }
+                    }
+                });
+            }
+        }
+
+        // Edge vs P&L scatter
+        if (d.edge_analysis && d.edge_analysis.length) {
+            const ctx2 = document.getElementById('perfEdgeChart');
+            if (ctx2) {
+                if (_perfEdgeChart) _perfEdgeChart.destroy();
+                const wins = d.edge_analysis.filter(e => e.won);
+                const losses = d.edge_analysis.filter(e => !e.won);
+                _perfEdgeChart = new Chart(ctx2, {
+                    type: 'scatter',
+                    data: {
+                        datasets: [
+                            {
+                                label: 'Wins',
+                                data: wins.map(e => ({ x: (e.edge * 100), y: e.pnl })),
+                                backgroundColor: 'rgba(0,214,143,0.8)', pointRadius: 6,
+                            },
+                            {
+                                label: 'Losses',
+                                data: losses.map(e => ({ x: (e.edge * 100), y: e.pnl })),
+                                backgroundColor: 'rgba(255,107,107,0.8)', pointRadius: 6,
+                            }
+                        ]
+                    },
+                    options: {
+                        responsive: true, maintainAspectRatio: false,
+                        plugins: { legend: { labels: { color: '#8b8fa3', font: { size: 11 } } } },
+                        scales: {
+                            x: { title: { display: true, text: 'Edge %', color: '#8b8fa3' }, ticks: { color: '#8b8fa3', callback: v => v + '%' }, grid: { color: '#2d3140' } },
+                            y: { title: { display: true, text: 'P&L $', color: '#8b8fa3' }, ticks: { color: '#8b8fa3', callback: v => '$' + v }, grid: { color: '#2d3140' } }
+                        }
+                    }
+                });
+            }
+        }
+
+        // Forecast error table
+        if (d.forecast_errors && d.forecast_errors.length) {
+            $('perfErrorCount').textContent = d.forecast_errors.length + ' trades';
+            let html = '<table><thead><tr><th>#</th><th>City</th><th>Forecast</th><th>Actual</th><th>Error</th><th>Gap</th><th>Side</th><th>P&L</th><th>Result</th></tr></thead><tbody>';
+            for (const e of d.forecast_errors) {
+                const errColor = Math.abs(e.error) <= 2 ? 'var(--green)' : Math.abs(e.error) <= 4 ? 'var(--yellow)' : 'var(--red)';
+                const icon = e.won ? '<span style="color:var(--green)">W</span>' : '<span style="color:var(--red)">L</span>';
+                const pClass = e.pnl >= 0 ? 'pnl-pos' : 'pnl-neg';
+                html += `<tr>
+                    <td>${e.id}</td><td>${e.city}</td>
+                    <td>${e.forecast}°</td><td><b>${e.actual}°</b></td>
+                    <td style="color:${errColor};font-weight:600">${e.error > 0 ? '+' : ''}${e.error}°</td>
+                    <td style="color:var(--text-dim)">${e.gap}°</td>
+                    <td>${(e.side||'').toUpperCase()} ${e.direction||''}</td>
+                    <td class="${pClass}">${usd(e.pnl)}</td>
+                    <td>${icon}</td>
+                </tr>`;
+            }
+            html += '</tbody></table>';
+            $('perfErrorBody').innerHTML = html;
+        }
+    } catch(e) { console.error('Performance load error:', e); }
+}
+
 // Trade notes
 async function saveNote(tradeId) {
     const input = document.getElementById('note-' + tradeId);
@@ -1235,6 +1389,7 @@ async function saveNote(tradeId) {
     await loadConfig();
     await loadEquityChart();
     await refreshDailyPnlChart();
+    await refreshPerformance();
 })();
 
 setInterval(async () => {
@@ -1243,6 +1398,7 @@ setInterval(async () => {
     await refreshTrades();
     await refreshCityStats();
     await refreshDailyPnlChart();
+    await refreshPerformance();
 }, 30000);
 
 // Independent 60s refresh for open positions live P&L

@@ -194,6 +194,24 @@ def evaluate_market(market: dict, forecast: dict, bankroll: float) -> dict | Non
         if gap < min_buffer:
             return None
 
+    # NWS cross-check: if NWS forecast disagrees with Open-Meteo by >5°F,
+    # the models are uncertain and we should skip. Degrades gracefully
+    # (if NWS is unavailable, trade proceeds normally).
+    nws_disagreement = 0.0
+    try:
+        from src.data.nws_forecast import get_nws_forecast, nws_agrees
+        from src.config import CITY_CONFIG
+        series_ticker = market.get("series_ticker", "")
+        city_cfg = CITY_CONFIG.get(series_ticker, {})
+        nws_station = city_cfg.get("nws_station")
+        if nws_station and market_type in ("high_temp", "low_temp"):
+            nws = get_nws_forecast(nws_station, market.get("target_date", ""), market_type)
+            agrees, nws_disagreement = nws_agrees(nws, forecast_mean, market_type, max_disagreement_f=5.0)
+            if not agrees:
+                return None
+    except Exception:
+        pass  # NWS unavailable — proceed with Open-Meteo only
+
     unit = market.get("unit", "°F")
     yes_label, no_label = _direction_labels(market_type)
 
@@ -276,6 +294,7 @@ def evaluate_market(market: dict, forecast: dict, bankroll: float) -> dict | Non
             "forecast_max": round(forecast["max_high"], 1),
             "n_members": forecast["n_members"],
             "n_above": forecast["n_above"],
+            "nws_disagreement": nws_disagreement,
         }
 
     # Check YES side — model_prob_yes is prob that YES wins given actual contract direction

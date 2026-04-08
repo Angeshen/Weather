@@ -62,6 +62,9 @@ def notify_trade(signal: dict, result: dict):
         f"🌡️ Forecast: {signal.get('forecast_mean', '?')}{unit} ({signal.get('forecast_min', '?')}–{signal.get('forecast_max', '?')})\n"
         f"👥 Ensemble: {signal.get('n_members', '?')} members, {signal.get('n_above', '?')} above threshold"
     )
+    nws_diff = signal.get("nws_disagreement", 0)
+    if nws_diff > 0:
+        text += f"\n🏛️ NWS cross-check: ±{nws_diff}°F disagreement ✅"
     _send_message(text)
 
 
