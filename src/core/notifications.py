@@ -260,12 +260,57 @@ def notify_confidence_spike(signal: dict):
         return  # Max once per 2 hours per ticker
     _last_confidence_spike[ticker] = now
     unit = signal.get("unit", "°F")
+    threshold = signal.get("threshold_f", "?")
+    direction = signal.get("direction", "?")
+    forecast_mean = signal.get("forecast_mean", 0)
+    n_above = signal.get("n_above", 0)
+    n_members = signal.get("n_members", 0)
+
+    # Plain English: what does this mean?
+    if direction == "ABOVE":
+        plain = f"High temp likely ABOVE {threshold}{unit}"
+        ensemble_line = f"{n_above}/{n_members} models predict above {threshold}{unit}"
+    else:
+        plain = f"High temp likely BELOW {threshold}{unit}"
+        ensemble_line = f"{n_members - n_above}/{n_members} models predict below {threshold}{unit}"
+
+    # Check if we have an open trade on this ticker or same city/date
+    impact_line = ""
+    try:
+        import sqlite3
+        from src.core.trade_executor import get_db
+        conn = get_db()
+        conn.row_factory = sqlite3.Row
+        open_trades = conn.execute(
+            "SELECT ticker, side, city, direction AS trade_dir FROM trades WHERE status = 'open'"
+        ).fetchall()
+        conn.close()
+        for t in open_trades:
+            if t["ticker"] == ticker or (t["city"] == signal.get("city") and ticker.split("-")[1] == t["ticker"].split("-")[1]):
+                trade_side = t["side"]  # "yes" or "no"
+                trade_dir = t["trade_dir"]  # "ABOVE" or "BELOW"
+                # Does this spike help or hurt our position?
+                # If spike says ABOVE and we hold YES on ABOVE (or NO on BELOW) → good
+                # If spike says BELOW and we hold YES on BELOW (or NO on ABOVE) → good
+                helps = (
+                    (direction == "ABOVE" and ((trade_side == "yes" and trade_dir == "ABOVE") or (trade_side == "no" and trade_dir == "BELOW")))
+                    or (direction == "BELOW" and ((trade_side == "yes" and trade_dir == "BELOW") or (trade_side == "no" and trade_dir == "ABOVE")))
+                )
+                if helps:
+                    impact_line = f"\n\n✅ <b>Good for your open {t['city']} trade!</b> Models are moving in your favor."
+                else:
+                    impact_line = f"\n\n⚠️ <b>Against your open {t['city']} trade.</b> Watch for stop-loss."
+                break
+    except Exception:
+        pass
+
     text = (
-        f"⚡ <b>Confidence Spike</b>\n\n"
-        f"<b>{signal['city']}</b> — {signal['target_date']}\n"
-        f"Direction: {signal['direction']}\n"
-        f"🎯 Confidence: <b>{confidence*100:.1f}%</b> (rapid ensemble convergence)\n"
-        f"Edge: {signal.get('edge', 0)*100:.1f}% | Size: ${signal.get('position_size_usd', 0):.2f}"
+        f"⚡ <b>Confidence Spike — {signal['city']}</b>\n\n"
+        f"📍 {plain}\n"
+        f"📅 {signal['target_date']} | Forecast: {forecast_mean}{unit}\n"
+        f"🎯 {ensemble_line}\n"
+        f"Confidence: <b>{confidence*100:.0f}%</b> | Edge: {signal.get('edge', 0)*100:.0f}%"
+        f"{impact_line}"
     )
     _send_message(text)
 
