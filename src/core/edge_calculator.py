@@ -182,15 +182,14 @@ def evaluate_market(market: dict, forecast: dict, bankroll: float) -> dict | Non
         return None
 
     # Skip markets where the forecast mean is too close to the threshold.
-    # A 2-3°F forecast error is normal for NWP models — if the mean is within
-    # that range of the threshold, the outcome is essentially a coin flip.
-    # 3°F buffer for temperature, 0.10 inches for precipitation.
+    # With scalping strategy (sell at +20%), we can accept tighter gaps since
+    # we're not holding to expiry. 2°F buffer for temperature.
     market_type = market.get("market_type", "high_temp")
     forecast_mean = forecast.get("mean_val", 0) or forecast.get("mean_high", 0)
     threshold = market.get("yes_threshold") or market.get("threshold_f", 0)
     if forecast_mean and threshold:
         gap = abs(forecast_mean - threshold)
-        min_buffer = 0.10 if market_type == "precipitation" else 3.0
+        min_buffer = 0.10 if market_type == "precipitation" else 2.0
         if gap < min_buffer:
             return None
 

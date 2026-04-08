@@ -670,11 +670,12 @@ def exit_losing_positions(current_markets: list, client=None) -> list[dict]:
         if not entry_price or not contracts or not cost:
             continue
 
-        # Skip early exit for low-price contracts — bid/ask spread is noise on illiquid markets
-        if entry_price < 0.10:
+        # Skip early exit for penny contracts — bid/ask spread is pure noise
+        if entry_price < 0.04:
             continue
 
-        # Skip exit check for trades entered less than 15 minutes ago
+        # Skip exit check for trades entered less than 5 minutes ago
+        # Short grace period — just enough to avoid bid/ask bounce after entry
         try:
             entered_at = datetime.fromisoformat(trade["timestamp"])
             if entered_at.tzinfo is None:
@@ -682,7 +683,7 @@ def exit_losing_positions(current_markets: list, client=None) -> list[dict]:
             age_seconds = (datetime.now(timezone.utc) - entered_at).total_seconds()
         except Exception:
             age_seconds = 9999  # If parsing fails, assume old trade — allow exit check
-        if age_seconds < 900:
+        if age_seconds < 300:
             # Notify if the trade would have been exited but is protected
             current_bid_check = market.get("yes_bid") if trade.get("side") == "yes" else market.get("no_bid")
             if current_bid_check and cost:
@@ -716,11 +717,12 @@ def exit_losing_positions(current_markets: list, client=None) -> list[dict]:
             except Exception:
                 pass
 
-        # Profit target exit: if current bid >= 60% of $1 max payout, lock in gains
-        # Only on multi-day trades (age > 4 hours) to avoid churning same-day positions
+        # Profit target exit: scalp small gains early instead of holding to expiry.
+        # Sell when bid is 20%+ above entry (e.g. bought at 10¢, sell at 12¢+).
+        # Only wait 5 min after entry to avoid immediate churn from bid/ask bounce.
         max_payout_per_contract = 1.0 - entry_price  # net profit per contract if it settles
-        profit_target = entry_price + max_payout_per_contract * 0.60  # 60% of the way to $1
-        if current_bid >= profit_target and age_seconds > 14400:
+        profit_target = entry_price * 1.20  # 20% gain on entry price
+        if current_bid >= profit_target and age_seconds > 300:
             realized_pnl = round(current_value - cost, 2)
             gain_pct = (current_bid - entry_price) / max_payout_per_contract * 100 if max_payout_per_contract > 0 else 0
             if settings.trading_mode == "live" and client:

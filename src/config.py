@@ -50,10 +50,16 @@ class Settings(BaseSettings):
     max_days_to_expiry: int = Field(default=2, alias="MAX_DAYS_TO_EXPIRY")
     open_meteo_api_key: str = Field(default="", alias="OPEN_METEO_API_KEY")
 
-    # Weather market tickers — only series confirmed to exist on Kalshi
-    # Kalshi currently only offers high temp for 5 cities (NY, CHI, MIA, LAX, DEN)
+    # Weather market tickers — all confirmed active Kalshi weather series
     weather_series: list[str] = [
+        # Original KXHIGH cities
         "KXHIGHNY", "KXHIGHCHI", "KXHIGHMIA", "KXHIGHLAX", "KXHIGHDEN",
+        # KXHIGHT (T-suffix) high temp cities
+        "KXHIGHTHOU", "KXHIGHTPHX", "KXHIGHTBOS", "KXHIGHTDAL",
+        "KXHIGHTDC", "KXHIGHTSEA", "KXHIGHTPHI",
+        # KXLOWT low temp cities
+        "KXLOWTNYC", "KXLOWTLAX", "KXLOWTHOU", "KXLOWTBOS",
+        "KXLOWTDC", "KXLOWTMIA",
     ]
 
     class Config:

@@ -363,8 +363,9 @@ def bot_loop():
                 break
             time.sleep(1)
             elapsed += 1
-            # Fast exit monitor — fetch fresh prices for open positions every 60s
-            if elapsed % 60 == 0 and settings.trading_mode == "live" and client:
+            # Fast exit monitor — fetch fresh prices for open positions every 30s
+            # Frequent checks are critical for scalping small 20% gains
+            if elapsed % 30 == 0 and settings.trading_mode == "live" and client:
                 try:
                     fresh_markets = fetch_open_position_prices(client)
                     if fresh_markets:
