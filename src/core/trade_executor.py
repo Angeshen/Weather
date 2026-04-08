@@ -717,12 +717,25 @@ def exit_losing_positions(current_markets: list, client=None) -> list[dict]:
             except Exception:
                 pass
 
-        # Profit target exit: scalp small gains early instead of holding to expiry.
-        # Sell when bid is 20%+ above entry (e.g. bought at 10¢, sell at 12¢+).
-        # Only wait 5 min after entry to avoid immediate churn from bid/ask bounce.
+        # Profit target exit: scalp gains early instead of holding to expiry.
+        # Requirements for a valid profit exit:
+        #   1. Bid is 25%+ above entry (accounts for spread slippage)
+        #   2. At least 2¢/contract profit (covers Kalshi's implicit spread cost)
+        #   3. Exit spread is reasonable (≤8¢) so we're selling into real demand
+        #   4. Trade is at least 5 min old (avoid bid/ask bounce churn)
         max_payout_per_contract = 1.0 - entry_price  # net profit per contract if it settles
-        profit_target = entry_price * 1.20  # 20% gain on entry price
-        if current_bid >= profit_target and age_seconds > 300:
+        profit_target = entry_price * 1.25  # 25% gain on entry price
+        min_profit_per_contract = 0.02  # at least 2¢ per contract profit
+        # Check exit spread — only sell if there's real demand (tight spread)
+        if side == "yes":
+            exit_ask = market.get("yes_ask") or 0
+        else:
+            exit_ask = market.get("no_ask") or 0
+        exit_spread = (exit_ask - current_bid) if exit_ask and current_bid else 99
+        if (current_bid >= profit_target
+                and current_bid - entry_price >= min_profit_per_contract
+                and exit_spread <= 0.08
+                and age_seconds > 300):
             realized_pnl = round(current_value - cost, 2)
             gain_pct = (current_bid - entry_price) / max_payout_per_contract * 100 if max_payout_per_contract > 0 else 0
             if settings.trading_mode == "live" and client:

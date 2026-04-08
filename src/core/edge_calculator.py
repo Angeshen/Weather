@@ -72,7 +72,11 @@ def kelly_size(win_prob: float, odds: float) -> float:
 def compute_position_size(win_prob: float, market_price: float, bankroll: float,
                           days_to_expiry: int = 7) -> float:
     """
-    Compute dollar position size using fractional Kelly, scaled by days to expiry.
+    Compute dollar position size using flat sizing for scalping strategy.
+
+    Scalping sells at +25% gain, not hold-to-expiry, so Kelly criterion
+    (designed for binary outcomes) over-sizes positions. Instead we use a
+    flat 3-5% of bankroll per trade, scaled by edge strength and expiry.
 
     Args:
         win_prob: Model's estimated probability of winning (0-1).
@@ -86,21 +90,24 @@ def compute_position_size(win_prob: float, market_price: float, bankroll: float,
     if market_price <= 0 or market_price >= 1:
         return 0.0
 
-    net_odds = (1.0 - market_price) / market_price
+    # Base: 4% of bankroll per trade
+    base_pct = 0.04
+    position = base_pct * bankroll
 
-    raw_kelly = kelly_size(win_prob, net_odds)
-    fractional = raw_kelly * settings.kelly_fraction
+    # Scale up slightly for higher edge (more confident trades get more $)
+    edge = win_prob - market_price
+    if edge >= 0.15:
+        position *= 1.5   # 6% of bankroll for strong edge
+    elif edge >= 0.10:
+        position *= 1.25  # 5% of bankroll for good edge
 
-    position = fractional * bankroll
-
-    # Scale down position for near-expiry markets where ensemble has less predictive value:
-    # 7+ days: full size | 3-6 days: 75% | 1-2 days: 50% | same day: 25%
+    # Scale down for near-expiry markets where forecast has less value
     if days_to_expiry <= 0:
         expiry_scale = 0.25
+    elif days_to_expiry <= 1:
+        expiry_scale = 0.60
     elif days_to_expiry <= 2:
-        expiry_scale = 0.50
-    elif days_to_expiry <= 6:
-        expiry_scale = 0.75
+        expiry_scale = 0.80
     else:
         expiry_scale = 1.0
 
