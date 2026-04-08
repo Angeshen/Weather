@@ -3,7 +3,47 @@ Calculate edge between model probability and market price.
 Determine trade signals and Kelly criterion position sizing.
 """
 
+import time as _time
 from src.config import settings
+
+# --- Momentum tracker ---
+# Stores recent yes_ask prices per ticker across scan cycles.
+# Key: ticker, Value: list of (timestamp, yes_ask) tuples, newest first.
+_price_history: dict[str, list[tuple[float, float]]] = {}
+_PRICE_HISTORY_MAX = 6       # keep last 6 observations (~30-60 min at 5-10 min scans)
+_PRICE_HISTORY_TTL = 7200    # discard prices older than 2 hours
+
+
+def record_price(ticker: str, yes_ask: float | None):
+    """Record a price observation for momentum tracking. Called during scan."""
+    if not yes_ask or yes_ask <= 0:
+        return
+    now = _time.time()
+    history = _price_history.setdefault(ticker, [])
+    # Deduplicate — don't add if last entry is same price and < 30s ago
+    if history and abs(history[0][1] - yes_ask) < 0.005 and now - history[0][0] < 30:
+        return
+    history.insert(0, (now, yes_ask))
+    # Trim old entries
+    _price_history[ticker] = [
+        (t, p) for t, p in history[:_PRICE_HISTORY_MAX]
+        if now - t < _PRICE_HISTORY_TTL
+    ]
+
+
+def get_momentum(ticker: str, side: str) -> float | None:
+    """
+    Return price momentum for a ticker.
+    Positive = price moving up (good for YES buyers, bad for NO buyers).
+    Negative = price moving down (good for NO buyers, bad for YES buyers).
+    Returns None if not enough history.
+    """
+    history = _price_history.get(ticker, [])
+    if len(history) < 2:
+        return None  # Not enough data — allow trade
+    newest_price = history[0][1]
+    oldest_price = history[-1][1]
+    return newest_price - oldest_price
 
 
 def calculate_edge(model_prob: float, market_prob: float) -> float:
@@ -148,24 +188,27 @@ def evaluate_market(market: dict, forecast: dict, bankroll: float) -> dict | Non
     # Apply bias correction: if model historically runs warm/cold for this city,
     # shift the effective threshold before computing probabilities.
     # e.g. if model has +2°F warm bias, treat threshold as 2°F higher (harder to exceed).
+    # Uses ensemble members directly — no scipy needed.
     try:
         from src.core.trade_executor import get_city_bias
         city = market.get("city", "")
         bias = get_city_bias(city)  # positive = model runs warm
         if bias != 0.0:
-            threshold = market.get("threshold_f", 0)
-            n_above = forecast.get("n_above", 0)
-            n_members = forecast.get("n_members", 1)
-            # Adjust mean — shift all members by -bias to correct for warm/cold bias
-            # This effectively raises/lowers the bar for prob_above
-            corrected_mean = forecast.get("mean_high", threshold) - bias
-            shift = corrected_mean - forecast.get("mean_high", corrected_mean)
-            # Approximate corrected prob by shifting threshold instead of resampling
-            import scipy.stats as _stats
-            std = (forecast.get("max_high", corrected_mean) - forecast.get("min_high", corrected_mean)) / 4 or 2.5
-            model_prob_above = float(1 - _stats.norm.cdf(threshold, loc=corrected_mean, scale=std))
-            model_prob_above = max(0.01, min(0.99, model_prob_above))
-            model_prob_below = 1.0 - model_prob_above
+            # Instead of resampling, shift the threshold by +bias.
+            # If model runs +2°F warm, actual temps are ~2°F lower than forecast,
+            # so it's harder to exceed the threshold → shift threshold up by bias.
+            threshold_val = market.get("yes_threshold") or market.get("threshold_f", 0)
+            corrected_threshold = threshold_val + bias
+            mean_val = forecast.get("mean_high", 0) or forecast.get("mean_val", 0)
+            std = (forecast.get("max_high", mean_val) - forecast.get("min_high", mean_val)) / 4
+            if std > 0 and mean_val:
+                # Approximate normal CDF using math.erf (no scipy needed)
+                import math
+                z = (corrected_threshold - mean_val) / std
+                corrected_prob_below = 0.5 * (1 + math.erf(z / math.sqrt(2)))
+                model_prob_above = max(0.01, min(0.99, 1.0 - corrected_prob_below))
+                model_prob_below = 1.0 - model_prob_above
+                confidence = abs(model_prob_above - 0.5) * 2
     except Exception:
         pass  # If bias correction fails, proceed with raw forecast probs
 
@@ -216,6 +259,25 @@ def evaluate_market(market: dict, forecast: dict, bankroll: float) -> dict | Non
 
     yes_ask = market.get("yes_ask")
     no_ask = market.get("no_ask")
+    yes_bid = market.get("yes_bid")
+    no_bid = market.get("no_bid")
+
+    # Spread-aware pricing: when spread is wide (>4¢), use midpoint instead
+    # of ask for our limit order. Gets better fills and preserves more edge.
+    def _smart_price(ask, bid):
+        if not ask or ask <= 0:
+            return None
+        if not bid or bid <= 0:
+            return ask  # No bid — use ask as-is
+        spread_cents = int(ask * 100) - int(bid * 100)
+        if spread_cents > 4:
+            # Use midpoint rounded up to nearest cent (we're buying)
+            mid = (ask + bid) / 2
+            return round(mid * 100 + 0.5) / 100  # ceil to nearest cent
+        return ask  # Tight spread — just take the ask
+
+    yes_entry = _smart_price(yes_ask, yes_bid)
+    no_entry = _smart_price(no_ask, no_bid)
 
     # Use the actual YES direction and threshold from Kalshi's subtitle
     # e.g. "62° or above" -> yes_means_above=True, yes_threshold=62
@@ -234,6 +296,15 @@ def evaluate_market(market: dict, forecast: dict, bankroll: float) -> dict | Non
     signals = []
 
     def _build_signal(side, direction, model_prob, price):
+        # Momentum confirmation: skip if price is moving against us by >3¢.
+        # For YES buyers, rising price is good (market agrees with us).
+        # For NO buyers, falling price is good (YES getting cheaper = NO getting pricier).
+        momentum = get_momentum(market.get("ticker", ""), side)
+        if momentum is not None:
+            adverse = momentum < -0.03 if side == "yes" else momentum > 0.03
+            if adverse:
+                return None
+
         # Only buy contracts up to max_contract_price for reasonable risk/reward
         if price > settings.max_contract_price:
             return None
@@ -296,19 +367,19 @@ def evaluate_market(market: dict, forecast: dict, bankroll: float) -> dict | Non
             "nws_disagreement": nws_disagreement,
         }
 
-    # Check YES side — model_prob_yes is prob that YES wins given actual contract direction
-    if yes_ask and yes_ask > 0:
-        edge_yes = calculate_edge(model_prob_yes, yes_ask)
+    # Check YES side — use spread-aware entry price for better fills
+    if yes_entry and yes_entry > 0:
+        edge_yes = calculate_edge(model_prob_yes, yes_entry)
         if edge_yes >= settings.min_edge_threshold:
-            sig = _build_signal("yes", yes_direction, model_prob_yes, yes_ask)
+            sig = _build_signal("yes", yes_direction, model_prob_yes, yes_entry)
             if sig:
                 signals.append(sig)
 
-    # Check NO side
-    if no_ask and no_ask > 0:
-        edge_no = calculate_edge(model_prob_no, no_ask)
+    # Check NO side — use spread-aware entry price
+    if no_entry and no_entry > 0:
+        edge_no = calculate_edge(model_prob_no, no_entry)
         if edge_no >= settings.min_edge_threshold:
-            sig = _build_signal("no", no_direction, model_prob_no, no_ask)
+            sig = _build_signal("no", no_direction, model_prob_no, no_entry)
             if sig:
                 signals.append(sig)
 

@@ -18,7 +18,7 @@ from src.data.market_scanner import (
     discover_active_series,
 )
 from src.data.weather import get_forecast_for_city
-from src.core.edge_calculator import evaluate_market
+from src.core.edge_calculator import evaluate_market, record_price
 from src.core.trade_executor import (
     execute_trade,
     get_current_bankroll,
@@ -108,6 +108,9 @@ def run_scan():
     fetched_at = datetime.now(timezone.utc).isoformat()
     scan_errors = []
     for market in markets:
+        # Record price for momentum tracking across scan cycles
+        record_price(market.get("ticker", ""), market.get("yes_ask"))
+
         try:
             forecast = get_forecast_for_city(
                 series_ticker=market["series_ticker"],
