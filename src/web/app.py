@@ -164,9 +164,13 @@ def bot_loop():
     init_db()
     log_bankroll(get_current_bankroll(), "Bot started via GUI")
 
-    # Auto-discover active Kalshi series on startup
-    active_series = discover_active_series()
-    settings.weather_series = active_series
+    # Auto-discover active Kalshi series on startup — merge with hardcoded list
+    # so we never lose our known series, but can pick up new ones Kalshi adds
+    base_series = list(settings.weather_series)  # hardcoded 18 series from config
+    discovered = discover_active_series()
+    merged = sorted(set(base_series + discovered))
+    settings.weather_series = merged
+    print(f"[bot_loop] Series: {len(base_series)} hardcoded + {len(discovered)} discovered = {len(merged)} total")
     last_discovery = time.time()
 
     client = None
@@ -181,8 +185,9 @@ def bot_loop():
     while bot_state["running"]:
         # Re-discover series every 6 hours in case Kalshi adds new markets
         if time.time() - last_discovery > 21600:
-            active_series = discover_active_series()
-            settings.weather_series = active_series
+            discovered = discover_active_series()
+            merged = sorted(set(base_series + discovered))
+            settings.weather_series = merged
             last_discovery = time.time()
         try:
             print(f"[bot_loop] Starting scan #{bot_state.get('scan_count', 0) + 1}...")
