@@ -952,11 +952,12 @@ def get_open_trades_with_current_prices(last_markets: list, client=None) -> list
             except Exception:
                 pass
 
-        # Current market price for our side
+        # Current market price for our side — use BID (what we'd get if we sold now)
+        # not ask (what we'd pay to buy more). This matches Kalshi's market value.
         if trade.get("side") == "yes":
-            current_price = current.get("yes_ask") or current.get("yes_bid")
+            current_price = current.get("yes_bid") or current.get("yes_ask")
         else:
-            current_price = current.get("no_ask") or current.get("no_bid")
+            current_price = current.get("no_bid") or current.get("no_ask")
 
         entry_price = trade.get("market_price", 0)
         contracts = trade.get("contracts", 0)
