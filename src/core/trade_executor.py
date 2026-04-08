@@ -340,7 +340,13 @@ def execute_live_trade(signal: dict, client: KalshiClient) -> dict:
             except Exception:
                 pass
 
-        actual_size = round(filled_contracts * signal["market_price"], 2)
+        # Use actual fill price from Kalshi, fall back to signal price
+        actual_price = signal["market_price"]
+        actual_price_cents = signal["price_cents"]
+        if fill_price_cents:
+            actual_price_cents = int(fill_price_cents)
+            actual_price = actual_price_cents / 100.0
+        actual_size = round(filled_contracts * actual_price, 2)
 
         conn = get_db()
         cursor = conn.execute("""
@@ -360,11 +366,11 @@ def execute_live_trade(signal: dict, client: KalshiClient) -> dict:
             signal["side"],
             signal["direction"],
             signal["model_prob"],
-            signal["market_price"],
+            actual_price,
             signal["edge"],
             signal["confidence"],
             filled_contracts,
-            signal["price_cents"],
+            actual_price_cents,
             actual_size,
             signal.get("forecast_mean"),
             signal.get("forecast_min"),
