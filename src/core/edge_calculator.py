@@ -175,6 +175,7 @@ def evaluate_market(market: dict, forecast: dict, bankroll: float) -> dict | Non
         Trade signal dict, or None if no edge.
     """
     from datetime import date as _date
+    ticker = market.get("ticker", "?")
     try:
         target = _date.fromisoformat(market.get("target_date", ""))
         days_to_expiry = (target - _date.today()).days
@@ -182,11 +183,13 @@ def evaluate_market(market: dict, forecast: dict, bankroll: float) -> dict | Non
         days_to_expiry = 7
     # Skip illiquid markets — wide spreads eat our edge, thin volume means bad fills
     if not _is_liquid(market):
+        print(f"[filter] {ticker}: REJECTED — illiquid (vol={market.get('volume',0)}, spread check failed)")
         return None
 
     n_members = forecast.get("n_members", 0)
     if n_members < 40:
-        return None  # Need substantial ensemble for reliable probability
+        print(f"[filter] {ticker}: REJECTED — ensemble too small ({n_members} members)")
+        return None
 
     model_prob_above = forecast["prob_above"]
     model_prob_below = forecast["prob_below"]
@@ -221,14 +224,17 @@ def evaluate_market(market: dict, forecast: dict, bankroll: float) -> dict | Non
 
     # Trade when ensemble strongly agrees (configurable threshold)
     if confidence < float(settings.min_confidence_threshold):
+        print(f"[filter] {ticker}: REJECTED — confidence {confidence:.2f} < {settings.min_confidence_threshold}")
         return None
 
     # Skip markets too far out — GFS accuracy degrades fast beyond 2 days
     if days_to_expiry > int(settings.max_days_to_expiry):
+        print(f"[filter] {ticker}: REJECTED — expiry {days_to_expiry}d > max {settings.max_days_to_expiry}d")
         return None
 
     # Skip same-day markets — forecast is stale by expiry day, market has already priced in current conditions
     if days_to_expiry <= 0:
+        print(f"[filter] {ticker}: REJECTED — same-day market")
         return None
 
     # Skip markets where the forecast mean is too close to the threshold.
@@ -237,10 +243,12 @@ def evaluate_market(market: dict, forecast: dict, bankroll: float) -> dict | Non
     market_type = market.get("market_type", "high_temp")
     forecast_mean = forecast.get("mean_val", 0) or forecast.get("mean_high", 0)
     threshold = market.get("yes_threshold") or market.get("threshold_f", 0)
+    gap = abs(forecast_mean - threshold) if forecast_mean and threshold else 99.0
     if forecast_mean and threshold:
         gap = abs(forecast_mean - threshold)
         min_buffer = 0.10 if market_type == "precipitation" else 2.0
         if gap < min_buffer:
+            print(f"[filter] {ticker}: REJECTED — buffer {gap:.1f} < {min_buffer} (mean={forecast_mean:.1f}, thresh={threshold})")
             return None
 
     # NWS cross-check: if NWS forecast disagrees with Open-Meteo by >5°F,
@@ -257,6 +265,7 @@ def evaluate_market(market: dict, forecast: dict, bankroll: float) -> dict | Non
             nws = get_nws_forecast(nws_station, market.get("target_date", ""), market_type)
             agrees, nws_disagreement = nws_agrees(nws, forecast_mean, market_type, max_disagreement_f=5.0)
             if not agrees:
+                print(f"[filter] {ticker}: REJECTED — NWS disagrees by {nws_disagreement:.1f}°F")
                 return None
     except Exception:
         pass  # NWS unavailable — proceed with Open-Meteo only
@@ -308,6 +317,7 @@ def evaluate_market(market: dict, forecast: dict, bankroll: float) -> dict | Non
         # paper, the variance is extreme — you lose 80-90% of these trades
         # and the tiny expected gain doesn't cover fees + bad luck streaks.
         if model_prob < 0.30:
+            print(f"[filter] {ticker}/{side}: REJECTED — model_prob {model_prob:.2f} < 0.30")
             return None
 
         # Momentum confirmation: skip if price is moving against us by >3¢.
@@ -317,10 +327,12 @@ def evaluate_market(market: dict, forecast: dict, bankroll: float) -> dict | Non
         if momentum is not None:
             adverse = momentum < -0.03 if side == "yes" else momentum > 0.03
             if adverse:
+                print(f"[filter] {ticker}/{side}: REJECTED — adverse momentum {momentum:+.2f}")
                 return None
 
         # Only buy contracts up to max_contract_price for reasonable risk/reward
         if price > settings.max_contract_price:
+            print(f"[filter] {ticker}/{side}: REJECTED — price {price:.2f} > max {settings.max_contract_price}")
             return None
 
         # Skip cheap contracts — at 3-4¢ the bid/ask spread alone can be 60%+ of
@@ -330,6 +342,7 @@ def evaluate_market(market: dict, forecast: dict, bankroll: float) -> dict | Non
         min_price = settings.min_contract_price_high_edge if edge >= settings.high_edge_price_threshold else settings.min_contract_price
         min_price = max(min_price, 0.08)
         if price < min_price:
+            print(f"[filter] {ticker}/{side}: REJECTED — price {int(price*100)}¢ < min {int(min_price*100)}¢")
             return None
 
         size = compute_position_size(model_prob, price, bankroll, days_to_expiry)
@@ -380,6 +393,9 @@ def evaluate_market(market: dict, forecast: dict, bankroll: float) -> dict | Non
             "nws_disagreement": nws_disagreement,
         }
 
+    # Log that this market passed all pre-signal filters
+    print(f"[filter] {ticker}: PASSED pre-filters (conf={confidence:.2f}, expiry={days_to_expiry}d, gap={gap:.1f}°F, yes_entry={yes_entry}, no_entry={no_entry}, prob_yes={model_prob_yes:.2f}, prob_no={model_prob_no:.2f})")
+
     # Check YES side — use spread-aware entry price for better fills
     if yes_entry and yes_entry > 0:
         edge_yes = calculate_edge(model_prob_yes, yes_entry)
@@ -387,6 +403,8 @@ def evaluate_market(market: dict, forecast: dict, bankroll: float) -> dict | Non
             sig = _build_signal("yes", yes_direction, model_prob_yes, yes_entry)
             if sig:
                 signals.append(sig)
+        else:
+            print(f"[filter] {ticker}/yes: REJECTED — edge {edge_yes:.3f} < min {settings.min_edge_threshold}")
 
     # Check NO side — use spread-aware entry price
     if no_entry and no_entry > 0:
@@ -395,6 +413,8 @@ def evaluate_market(market: dict, forecast: dict, bankroll: float) -> dict | Non
             sig = _build_signal("no", no_direction, model_prob_no, no_entry)
             if sig:
                 signals.append(sig)
+        else:
+            print(f"[filter] {ticker}/no: REJECTED — edge {edge_no:.3f} < min {settings.min_edge_threshold}")
 
     # Only take the single best signal per market — never trade both sides
     if len(signals) > 1:
