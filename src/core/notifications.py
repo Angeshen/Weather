@@ -345,7 +345,7 @@ def notify_grace_period_skip(ticker: str, city: str, age_minutes: float, loss_pc
         f"🛡️ <b>Grace Period Active</b>\n\n"
         f"<b>{city}</b> — <code>{ticker}</code>\n"
         f"Current loss: {loss_pct*100:.0f}% — but trade is only {age_minutes:.0f} min old\n"
-        f"Early exit skipped (15-min grace period in effect)"
+        f"Early exit skipped (5-min grace period in effect)"
     )
     _send_message(text)
 

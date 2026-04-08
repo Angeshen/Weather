@@ -296,6 +296,13 @@ def evaluate_market(market: dict, forecast: dict, bankroll: float) -> dict | Non
     signals = []
 
     def _build_signal(side, direction, model_prob, price):
+        # Minimum win probability floor: never buy contracts where our model
+        # says we only have a 10-20% chance of winning. Even with "edge" on
+        # paper, the variance is extreme — you lose 80-90% of these trades
+        # and the tiny expected gain doesn't cover fees + bad luck streaks.
+        if model_prob < 0.30:
+            return None
+
         # Momentum confirmation: skip if price is moving against us by >3¢.
         # For YES buyers, rising price is good (market agrees with us).
         # For NO buyers, falling price is good (YES getting cheaper = NO getting pricier).
@@ -309,13 +316,12 @@ def evaluate_market(market: dict, forecast: dict, bankroll: float) -> dict | Non
         if price > settings.max_contract_price:
             return None
 
-        # Skip very cheap contracts — usually near-expiry noise.
-        # Exception: allow down to min_contract_price_high_edge when edge is strong.
-        # Hard floor of 3¢ regardless of edge — a 1-2¢ contract means market is 98-99% confident
-        # the other side wins; our NWP model should not override that level of market consensus.
+        # Skip cheap contracts — at 3-4¢ the bid/ask spread alone can be 60%+ of
+        # the price, making it impossible to scalp. Hard floor of 8¢ ensures we only
+        # trade contracts with enough liquidity to sell back at a small profit.
         edge = model_prob - price
         min_price = settings.min_contract_price_high_edge if edge >= settings.high_edge_price_threshold else settings.min_contract_price
-        min_price = max(min_price, 0.03)
+        min_price = max(min_price, 0.08)
         if price < min_price:
             return None
 
