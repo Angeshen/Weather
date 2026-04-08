@@ -140,13 +140,16 @@ def run_backtest(days: int = 30) -> dict:
             z = math.sqrt(-2 * math.log(u)) * math.cos(2 * math.pi * ((hash(f"bm2_{series}_{date_str}") % 10000) / 10000.0))
             forecast_center = actual + z * rmse
 
-            ensemble = _simulate_ensemble(forecast_center, 0.0, rmse * 0.6, n=50)
+            # Ensemble spread: rmse*0.8 because the live bot averages 5 NWP models,
+            # which tightens the effective spread vs raw single-model RMSE.
+            ensemble = _simulate_ensemble(forecast_center, 0.0, rmse * 0.8, n=50)
             ensemble_mean = sum(ensemble) / len(ensemble)
 
-            # Realistic Kalshi thresholds: only 2-3 near the forecast mean
-            # Real Kalshi lists thresholds at ~5°F intervals near expected value
-            base = round(ensemble_mean / 5) * 5  # nearest 5°F
-            thresholds = [base - 5, base, base + 5]
+            # Realistic Kalshi thresholds: test a range and let filters pick winners.
+            # Real Kalshi has thresholds every 1-2°F in the tradeable zone.
+            # We test ±3 to ±8 from the mean — the 3°F buffer kills anything closer.
+            base = round(ensemble_mean)
+            thresholds = [base + d for d in [-8, -6, -5, -4, -3, 3, 4, 5, 6, 8]]
 
             # Find best signal for this city+day (max 1 trade per city per day)
             best_signal = None
@@ -167,45 +170,64 @@ def run_backtest(days: int = 30) -> dict:
                 if confidence < float(settings.min_confidence_threshold):
                     continue
 
-                if prob_above >= 0.5:
-                    side = "yes"
-                    model_prob = prob_above
-                else:
-                    side = "no"
-                    model_prob = prob_below
+                # Simulate market price. Real Kalshi markets are priced by retail
+                # traders using public forecasts (Weather.com, NWS point forecasts)
+                # which are less precise than our multi-model ensemble. The market
+                # "knows" the rough direction but has wider uncertainty.
+                # We model market belief as: actual prob + noise (market error).
+                # This creates realistic situations where our model disagrees with
+                # the market — sometimes we're right, sometimes the market is.
+                mkt_seed = (hash(f"mkt_{series}{date_str}{threshold}") % 10000) / 10000.0
+                # Market noise: ~10-20% mispricing in either direction
+                mkt_u = max(mkt_seed, 1e-9)
+                mkt_z = math.sqrt(-2 * math.log(mkt_u)) * math.cos(
+                    2 * math.pi * ((hash(f"mkt2_{series}{date_str}{threshold}") % 10000) / 10000.0))
+                mkt_noise = mkt_z * 0.12  # ~12% std mispricing
+                yes_price = round(prob_above + mkt_noise, 3)
+                yes_price = max(0.04, min(0.95, yes_price))
+                no_price = round(1.0 - yes_price, 3)
 
-                # Realistic Kalshi market price.
-                # Real markets are fairly efficient — they track model prob
-                # with 65-85% efficiency. Retail traders + market makers keep
-                # prices close to fair value; our edge comes from the gap.
-                eff_seed = (hash(f"{series}{date_str}{threshold}") % 1000) / 1000.0
-                efficiency = 0.65 + eff_seed * 0.20   # 0.65–0.85
-                market_price = round(0.5 + (model_prob - 0.5) * efficiency, 3)
+                # Evaluate BOTH sides — same as live bot
+                # YES side: buy YES if model thinks above is likely and price is cheap
+                # NO side: buy NO if model thinks below is likely and no_price is cheap
+                candidates = []
 
-                # Clamp to tradeable range
-                market_price = max(0.04, min(0.95, market_price))
+                # YES-above side
+                if yes_price <= settings.max_contract_price:
+                    edge_yes = prob_above - yes_price
+                    if edge_yes >= settings.min_edge_threshold:
+                        min_p = settings.min_contract_price_high_edge if edge_yes >= settings.high_edge_price_threshold else settings.min_contract_price
+                        if yes_price >= min_p:
+                            actual_above = actual > threshold
+                            candidates.append({
+                                "side": "yes", "model_prob": prob_above,
+                                "market_price": yes_price, "edge": edge_yes,
+                                "won": actual_above,
+                            })
 
-                if market_price > settings.max_contract_price:
-                    continue
+                # NO-below side
+                if no_price <= settings.max_contract_price:
+                    edge_no = prob_below - no_price
+                    if edge_no >= settings.min_edge_threshold:
+                        min_p = settings.min_contract_price_high_edge if edge_no >= settings.high_edge_price_threshold else settings.min_contract_price
+                        if no_price >= min_p:
+                            actual_above = actual > threshold
+                            candidates.append({
+                                "side": "no", "model_prob": prob_below,
+                                "market_price": no_price, "edge": edge_no,
+                                "won": not actual_above,
+                            })
 
-                edge = model_prob - market_price
-                if edge < settings.min_edge_threshold:
-                    continue
-
-                # Apply same min price filter as live bot
-                min_price = settings.min_contract_price_high_edge if edge >= settings.high_edge_price_threshold else settings.min_contract_price
-                if market_price < min_price:
-                    continue
-
-                # Track best signal for this city+day
-                if best_signal is None or edge > best_signal["edge"]:
-                    actual_above = actual > threshold
-                    won = actual_above if side == "yes" else not actual_above
-                    best_signal = {
-                        "threshold": threshold, "side": side, "model_prob": model_prob,
-                        "market_price": market_price, "edge": edge, "confidence": confidence,
-                        "won": won, "ensemble_mean": ensemble_mean,
-                    }
+                # Best candidate for this threshold
+                for c in candidates:
+                    if best_signal is None or c["edge"] > best_signal["edge"]:
+                        best_signal = {
+                            "threshold": threshold, "side": c["side"],
+                            "model_prob": c["model_prob"],
+                            "market_price": c["market_price"], "edge": c["edge"],
+                            "confidence": confidence, "won": c["won"],
+                            "ensemble_mean": ensemble_mean,
+                        }
 
             # Execute best signal (max 1 per city per day — matches live bot behavior)
             if best_signal:
