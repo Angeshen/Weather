@@ -176,6 +176,8 @@ def bot_loop():
         except Exception:
             pass
 
+    print(f"[bot_loop] Entering main loop. Mode={settings.trading_mode}, client={'yes' if client else 'no'}, series={len(settings.weather_series)}")
+
     while bot_state["running"]:
         # Re-discover series every 6 hours in case Kalshi adds new markets
         if time.time() - last_discovery > 21600:
@@ -183,10 +185,12 @@ def bot_loop():
             settings.weather_series = active_series
             last_discovery = time.time()
         try:
+            print(f"[bot_loop] Starting scan #{bot_state.get('scan_count', 0) + 1}...")
             if settings.trading_mode == "live" and client:
                 markets = scan_weather_markets(client)
             else:
                 markets = scan_weather_markets_public()
+            print(f"[bot_loop] Scan found {len(markets)} markets")
 
             bankroll = get_current_bankroll()
             signals = []
@@ -340,8 +344,10 @@ def bot_loop():
             bot_state["last_markets"] = clean_markets
             bot_state["scan_count"] += 1
 
-        except Exception:
-            pass
+        except Exception as e:
+            import traceback
+            print(f"[bot_loop] SCAN ERROR: {e}")
+            print(traceback.format_exc())
 
         # Heartbeat check — runs every loop iteration even if scan fails
         try:
