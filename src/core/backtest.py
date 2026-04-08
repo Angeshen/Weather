@@ -89,13 +89,12 @@ def run_backtest(days: int = 30) -> dict:
     """
     Backtest strategy against real historical weather data.
 
-    For each past day and city:
-    1. Fetch the actual observed temperature (ground truth)
-    2. Simulate what the GFS ensemble would have shown (actual + known error distribution)
-    3. For each Kalshi-style threshold near the forecast mean:
-       - Compute model probability from ensemble
-       - Apply same filters as live bot (confidence, edge, price)
-       - Check if trade would have won vs actual temp
+    Realistic constraints to match live bot behavior:
+    - Only 2-3 thresholds per city (like real Kalshi)
+    - Max 1 trade per city per day (best signal only)
+    - Market efficiency 0.65-0.85 (real markets are fairly efficient)
+    - 3°F buffer filter (same as live bot)
+    - All live bot filters: confidence, edge, price, spread
     """
     end_date = datetime.now() - timedelta(days=2)
     start_date = end_date - timedelta(days=days)
@@ -136,28 +135,36 @@ def run_backtest(days: int = 30) -> dict:
             # Build an INDEPENDENT model forecast — not derived from actual.
             # GFS day-1 forecast error is ~3.2°F RMSE, so the model sees
             # actual + noise where noise ~ N(0, rmse).
-            # We derive that noise deterministically from city+date so results
-            # are reproducible, but it is NOT computed from actual at all —
-            # just a hash-seeded offset that is sometimes +5°F, sometimes -5°F.
-            # This means the model will sometimes be wrong, producing real losses.
             err_seed = (hash(f"model_err_{series}_{date_str}") % 10000) / 10000.0
-            # Map uniform [0,1] → normal via Box-Muller approximation
             u = max(err_seed, 1e-9)
             z = math.sqrt(-2 * math.log(u)) * math.cos(2 * math.pi * ((hash(f"bm2_{series}_{date_str}") % 10000) / 10000.0))
-            forecast_center = actual + z * rmse   # model's day-1 forecast (independent of actual)
+            forecast_center = actual + z * rmse
 
             ensemble = _simulate_ensemble(forecast_center, 0.0, rmse * 0.6, n=50)
             ensemble_mean = sum(ensemble) / len(ensemble)
 
-            # Test thresholds around ensemble mean — same range Kalshi lists
-            for threshold in range(int(ensemble_mean) - 12, int(ensemble_mean) + 13, 2):
+            # Realistic Kalshi thresholds: only 2-3 near the forecast mean
+            # Real Kalshi lists thresholds at ~5°F intervals near expected value
+            base = round(ensemble_mean / 5) * 5  # nearest 5°F
+            thresholds = [base - 5, base, base + 5]
+
+            # Find best signal for this city+day (max 1 trade per city per day)
+            best_signal = None
+
+            for threshold in thresholds:
+                # 3°F buffer — same as live bot
+                gap = abs(ensemble_mean - threshold)
+                min_buffer = 0.10 if market_type == "precipitation" else 3.0
+                if gap < min_buffer:
+                    continue
+
                 n_above = sum(1 for v in ensemble if v > threshold)
                 n_below = len(ensemble) - n_above
                 prob_above = n_above / len(ensemble)
                 prob_below = n_below / len(ensemble)
                 confidence = abs(prob_above - 0.5) * 2
 
-                if confidence < 0.65:
+                if confidence < float(settings.min_confidence_threshold):
                     continue
 
                 if prob_above >= 0.5:
@@ -167,18 +174,16 @@ def run_backtest(days: int = 30) -> dict:
                     side = "no"
                     model_prob = prob_below
 
-                # Simulate Kalshi market price.
-                # Markets are inefficient 1-2 days out: they regress toward 50%
-                # because retail traders don't have ensemble data.
-                # We model this as: market = 0.5 + (model_prob - 0.5) * efficiency
-                # where efficiency ~ 0.55-0.75 (market is 55-75% as confident as model).
-                # Add a small deterministic noise per threshold to vary prices.
+                # Realistic Kalshi market price.
+                # Real markets are fairly efficient — they track model prob
+                # with 65-85% efficiency. Retail traders + market makers keep
+                # prices close to fair value; our edge comes from the gap.
                 eff_seed = (hash(f"{series}{date_str}{threshold}") % 1000) / 1000.0
-                efficiency = 0.30 + eff_seed * 0.25   # 0.30–0.55: market is much less confident than model
+                efficiency = 0.65 + eff_seed * 0.20   # 0.65–0.85
                 market_price = round(0.5 + (model_prob - 0.5) * efficiency, 3)
 
                 # Clamp to tradeable range
-                market_price = max(0.01, min(0.97, market_price))
+                market_price = max(0.04, min(0.95, market_price))
 
                 if market_price > settings.max_contract_price:
                     continue
@@ -192,22 +197,30 @@ def run_backtest(days: int = 30) -> dict:
                 if market_price < min_price:
                     continue
 
-                # Ground truth: did actual temp beat the threshold?
-                actual_above = actual > threshold
-                won = actual_above if side == "yes" else not actual_above
+                # Track best signal for this city+day
+                if best_signal is None or edge > best_signal["edge"]:
+                    actual_above = actual > threshold
+                    won = actual_above if side == "yes" else not actual_above
+                    best_signal = {
+                        "threshold": threshold, "side": side, "model_prob": model_prob,
+                        "market_price": market_price, "edge": edge, "confidence": confidence,
+                        "won": won, "ensemble_mean": ensemble_mean,
+                    }
 
-                # Kelly position sizing (same as live bot)
+            # Execute best signal (max 1 per city per day — matches live bot behavior)
+            if best_signal:
                 total_trades += 1
                 _backtest_progress["trades"] = total_trades
-                net_odds = (1.0 - market_price) / market_price
-                q = 1.0 - model_prob
-                kelly = max((model_prob * net_odds - q) / net_odds, 0) if net_odds > 0 else 0
+                mp = best_signal["market_price"]
+                net_odds = (1.0 - mp) / mp
+                q = 1.0 - best_signal["model_prob"]
+                kelly = max((best_signal["model_prob"] * net_odds - q) / net_odds, 0) if net_odds > 0 else 0
                 cost = min(settings.max_trade_size,
                            kelly * settings.kelly_fraction * settings.initial_bankroll)
-                cost = max(cost, 5.0)
+                cost = max(cost, 2.0)
 
-                if won:
-                    pnl = round(cost * (1.0 - market_price) / market_price, 2)
+                if best_signal["won"]:
+                    pnl = round(cost * (1.0 - mp) / mp, 2)
                     wins += 1
                 else:
                     pnl = round(-cost, 2)
@@ -219,15 +232,15 @@ def run_backtest(days: int = 30) -> dict:
                     "date": date_str,
                     "city": city_name,
                     "series": series,
-                    "threshold": threshold,
+                    "threshold": best_signal["threshold"],
                     "actual": round(actual, 1),
-                    "forecast_mean": round(ensemble_mean, 1),
-                    "side": side,
-                    "edge": round(edge, 4),
-                    "model_prob": round(model_prob, 4),
-                    "market_price": round(market_price, 4),
-                    "confidence": round(confidence, 4),
-                    "won": won,
+                    "forecast_mean": round(best_signal["ensemble_mean"], 1),
+                    "side": best_signal["side"],
+                    "edge": round(best_signal["edge"], 4),
+                    "model_prob": round(best_signal["model_prob"], 4),
+                    "market_price": round(best_signal["market_price"], 4),
+                    "confidence": round(best_signal["confidence"], 4),
+                    "won": best_signal["won"],
                     "pnl": pnl,
                     "cumulative_pnl": round(total_pnl, 2),
                 })
