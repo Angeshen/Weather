@@ -10,7 +10,7 @@ from datetime import datetime, timezone, timedelta
 import httpx
 
 from src.config import CITY_CONFIG
-from src.core.trade_executor import get_db, get_current_bankroll, log_bankroll, log_forecast_accuracy
+from src.core.trade_executor import get_db, get_current_bankroll, log_bankroll, log_forecast_accuracy, _update_daily_pnl
 from src.core.notifications import notify_daily_summary
 
 
@@ -186,21 +186,8 @@ def settle_open_trades() -> dict:
         except Exception:
             pass
 
-        # Update daily P&L
-        trade_date = trade["target_date"]
-        existing = conn.execute(
-            "SELECT * FROM daily_pnl WHERE date = ?", (trade_date,)
-        ).fetchone()
-        if existing:
-            conn.execute("""
-                UPDATE daily_pnl SET total_pnl = total_pnl + ?, trades_count = trades_count + 1,
-                wins = wins + ?, losses = losses + ? WHERE date = ?
-            """, (pnl, 1 if won else 0, 0 if won else 1, trade_date))
-        else:
-            conn.execute("""
-                INSERT INTO daily_pnl (date, total_pnl, trades_count, wins, losses)
-                VALUES (?, ?, 1, ?, ?)
-            """, (trade_date, pnl, 1 if won else 0, 0 if won else 1))
+        # Update daily P&L (uses today's date, not trade target date)
+        _update_daily_pnl(pnl, won)
 
         unit = "in" if market_type == "precipitation" else "°F"
         forecast_mean = trade.get("forecast_mean")
@@ -209,14 +196,6 @@ def settle_open_trades() -> dict:
             "trade_id": trade["id"],
             "ticker": ticker,
             "city": trade.get("city", "?"),
-            "target_date": trade["target_date"],
-            "threshold": threshold,
-            "actual": actual,
-            "forecast_mean": forecast_mean,
-            "model_error": model_error,
-            "unit": unit,
-            "direction": direction,
-            "side": side,
             "won": won,
             "pnl": pnl,
         })

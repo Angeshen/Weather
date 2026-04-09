@@ -83,12 +83,25 @@ def notify_scan_summary(markets_count: int, signals_count: int, trades_executed:
 def notify_daily_summary(stats: dict):
     """Send end-of-day performance summary with unrealized P&L, streak, and day comparison."""
     import time
+    from datetime import datetime, timezone
     pnl = stats.get("total_pnl", 0)
     pnl_emoji = "📈" if pnl >= 0 else "📉"
     win_rate = stats.get("win_rate", 0)
     bankroll = stats.get("bankroll", 0)
-    prev_bankroll = stats.get("prev_bankroll", bankroll)
-    day_change = bankroll - prev_bankroll
+
+    # Get today's realized P&L from settled trades
+    try:
+        from src.core.trade_executor import get_db
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        conn = get_db()
+        row = conn.execute(
+            "SELECT COALESCE(SUM(pnl_usd), 0) FROM trades WHERE status='settled' AND DATE(settled_at)=?",
+            (today,)
+        ).fetchone()
+        conn.close()
+        day_change = row[0] if row else 0.0
+    except Exception:
+        day_change = stats.get("daily_pnl", 0)
     day_emoji = "📈" if day_change >= 0 else "📉"
 
     unrealized = stats.get("unrealized_pnl")
