@@ -406,6 +406,7 @@ def bot_loop():
             if elapsed % 30 == 0 and settings.trading_mode == "live" and client:
                 try:
                     fresh_markets = fetch_open_position_prices(client)
+                    print(f"[exit_monitor] Checking {len(fresh_markets)} positions...")
                     if fresh_markets:
                         exited = exit_losing_positions(fresh_markets, client)
                         if exited:
