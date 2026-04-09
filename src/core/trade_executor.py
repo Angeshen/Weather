@@ -509,8 +509,18 @@ def get_stats() -> dict:
     }
 
 
-def _exit_loss_threshold():
-    return settings.exit_loss_threshold
+def _exit_loss_threshold(model_prob: float = 0.0):
+    """Confidence-tiered stop-loss.
+    High confidence (>80%): no stop-loss — hold to settlement.
+    Medium (60-80%): 40% loss threshold — room for overnight swings.
+    Low (<60%): use dashboard setting (default 25%) — tight stop for risky scalps.
+    """
+    if model_prob > 0.80:
+        return 999.0  # Effectively no stop-loss
+    elif model_prob > 0.60:
+        return 0.40
+    else:
+        return settings.exit_loss_threshold
 
 
 def reconcile_resting_orders(client) -> list[dict]:
@@ -782,7 +792,9 @@ def exit_losing_positions(current_markets: list, client=None) -> list[dict]:
             exited.append({"ticker": ticker, "pnl": realized_pnl, "gain_pct": gain_pct, "exit_type": "profit"})
             continue
 
-        if loss_pct < _exit_loss_threshold():
+        model_prob = trade.get("model_prob", 0) or 0
+        stop_threshold = _exit_loss_threshold(model_prob)
+        if loss_pct < stop_threshold:
             continue  # Position is fine, hold
 
         # Exit the position (loss)
