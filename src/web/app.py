@@ -402,9 +402,13 @@ def bot_loop():
                 try:
                     fresh_markets = fetch_open_position_prices(client)
                     if fresh_markets:
-                        exit_losing_positions(fresh_markets, client)
-                except Exception:
-                    pass
+                        exited = exit_losing_positions(fresh_markets, client)
+                        if exited:
+                            print(f"[exit_monitor] Exited {len(exited)} positions")
+                except Exception as e:
+                    import traceback
+                    print(f"[exit_monitor] ERROR: {e}")
+                    print(traceback.format_exc())
 
     if client:
         client.close()
