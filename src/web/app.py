@@ -152,10 +152,15 @@ def run_scan():
         executed = 0
         for signal in signals:
             if executed >= settings.max_concurrent_trades:
+                print(f"[scan_now] Skipping {signal['ticker']} — max concurrent reached")
                 break
+            print(f"[scan_now] Executing trade: {signal['ticker']} {signal['side']} edge={signal.get('edge',0):.2f}")
             result = execute_trade(signal, client)
+            print(f"[scan_now] Result: {result.get('status', 'unknown')} — {result.get('reason', '')}")
             if result.get("status") not in ("blocked", "failed"):
                 executed += 1
+    else:
+        print("[scan_now] Bot is paused — skipping trade execution")
 
     if client:
         client.close()
