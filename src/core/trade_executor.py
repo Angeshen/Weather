@@ -511,14 +511,13 @@ def get_stats() -> dict:
 
 def _exit_loss_threshold(model_prob: float = 0.0):
     """Confidence-tiered stop-loss.
-    High confidence (>80%): no stop-loss — hold to settlement.
-    Medium (60-80%): 40% loss threshold — room for overnight swings.
-    Low (<60%): use dashboard setting (default 25%) — tight stop for risky scalps.
+    ≥60% model prob: no stop-loss — hold to settlement. Weather markets
+    settle in 1-3 days; temporary price dips from overnight model runs
+    recover before settlement.
+    <60%: use dashboard setting (default 25%) — tight stop for risky scalps.
     """
-    if model_prob > 0.80:
+    if model_prob >= 0.60:
         return 999.0  # Effectively no stop-loss
-    elif model_prob > 0.60:
-        return 0.40
     else:
         return settings.exit_loss_threshold
 
