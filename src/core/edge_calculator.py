@@ -232,9 +232,10 @@ def evaluate_market(market: dict, forecast: dict, bankroll: float) -> dict | Non
         print(f"[filter] {ticker}: REJECTED — expiry {days_to_expiry}d > max {settings.max_days_to_expiry}d")
         return None
 
-    # Skip same-day markets — forecast is stale by expiry day, market has already priced in current conditions
-    if days_to_expiry <= 0:
-        print(f"[filter] {ticker}: REJECTED — same-day market")
+    # Skip expired markets only — same-day markets are fine for scalping
+    # (freshest forecasts, highest volume, best accuracy)
+    if days_to_expiry < 0:
+        print(f"[filter] {ticker}: REJECTED — expired market")
         return None
 
     # Skip markets where the forecast mean is too close to the threshold.
