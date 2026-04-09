@@ -395,6 +395,7 @@ def bot_loop():
         sleep_secs = max(60, settings.scan_interval_seconds // 2) if in_model_window else settings.scan_interval_seconds
 
         # Sleep between scans, but check exits every 60s using live Kalshi prices
+        print(f"[bot_loop] Scan complete. Sleeping {sleep_secs}s (exit checks every 30s)...")
         elapsed = 0
         for _ in range(sleep_secs):
             if not bot_state["running"]:
