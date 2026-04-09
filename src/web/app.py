@@ -147,6 +147,16 @@ def run_scan():
 
     signals.sort(key=lambda s: s["edge"], reverse=True)
 
+    # Execute trades from manual scan — same risk checks apply
+    if not is_paused():
+        executed = 0
+        for signal in signals:
+            if executed >= settings.max_concurrent_trades:
+                break
+            result = execute_trade(signal, client)
+            if result.get("status") not in ("blocked", "failed"):
+                executed += 1
+
     if client:
         client.close()
 
