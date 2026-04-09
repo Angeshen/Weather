@@ -572,38 +572,49 @@ def reconcile_resting_orders(client) -> list[dict]:
                     new_br = get_current_bankroll() - cost_diff
                     log_bankroll(new_br, f"Synced fill for #{trade['id']} {trade['ticker']}: {db_contracts}→{filled_int} contracts, cost {old_cost:.2f}→{actual_cost:.2f}")
 
-            # Only cancel orders that are explicitly resting/pending with zero fill
-            # Never cancel if status is executed, filled, or unknown
-            if order_status in ("resting", "pending") and filled == 0:
-                # Cancel the resting order on Kalshi
+            # Cancel resting/pending orders (fully or partially unfilled)
+            if order_status in ("resting", "pending"):
+                # Cancel the remaining unfilled portion on Kalshi
                 try:
                     client.cancel_order(order_id)
                 except Exception:
                     pass
 
-                # Void the trade in DB — refund cost back to bankroll
-                conn = get_db()
-                conn.execute(
-                    "UPDATE trades SET status = 'cancelled', pnl_usd = 0 WHERE id = ?",
-                    (trade["id"],)
-                )
-                conn.commit()
-                conn.close()
+                if filled_int == 0:
+                    # Zero fill — void the entire trade
+                    conn = get_db()
+                    conn.execute(
+                        "UPDATE trades SET status = 'cancelled', pnl_usd = 0 WHERE id = ?",
+                        (trade["id"],)
+                    )
+                    conn.commit()
+                    conn.close()
 
-                # Refund bankroll
-                refund = trade.get("position_size_usd", 0)
-                if refund:
-                    new_bankroll = get_current_bankroll() + refund
-                    log_bankroll(new_bankroll, f"Cancelled resting order #{order_id} on {trade['ticker']} — refunded ${refund:.2f}")
+                    # Refund bankroll
+                    refund = trade.get("position_size_usd", 0)
+                    if refund:
+                        new_bankroll = get_current_bankroll() + refund
+                        log_bankroll(new_bankroll, f"Cancelled resting order #{order_id} on {trade['ticker']} — refunded ${refund:.2f}")
+                else:
+                    # Partial fill — keep the trade but cancel unfilled remainder
+                    # Fill count was already synced above
+                    print(f"[reconcile] Partial fill on {trade['ticker']}: {filled_int}/{db_contracts} filled, cancelled remaining")
 
                 cancelled.append({"trade_id": trade["id"], "ticker": trade["ticker"], "order_id": order_id})
                 try:
                     from src.core.notifications import _send_message
-                    _send_message(
-                        f"⚠️ <b>Resting Order Cancelled</b>\n"
-                        f"<code>{trade['ticker']}</code> — order never filled\n"
-                        f"Refunded: <b>${refund:.2f}</b> back to bankroll"
-                    )
+                    if filled_int == 0:
+                        _send_message(
+                            f"⚠️ <b>Resting Order Cancelled</b>\n"
+                            f"<code>{trade['ticker']}</code> — order never filled\n"
+                            f"Refunded: <b>${trade.get('position_size_usd', 0):.2f}</b> back to bankroll"
+                        )
+                    else:
+                        _send_message(
+                            f"⚠️ <b>Partial Fill — Remainder Cancelled</b>\n"
+                            f"<code>{trade['ticker']}</code> — {filled_int}/{db_contracts} contracts filled\n"
+                            f"Keeping {filled_int} contracts, cancelled unfilled remainder"
+                        )
                 except Exception:
                     pass
 

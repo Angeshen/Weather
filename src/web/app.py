@@ -199,6 +199,15 @@ def bot_loop():
             merged = sorted(set(base_series + discovered))
             settings.weather_series = merged
             last_discovery = time.time()
+        # Reconcile resting orders — cancel unfilled portions, fix fill counts
+        if settings.trading_mode == "live" and client:
+            try:
+                reconciled = reconcile_resting_orders(client)
+                if reconciled:
+                    print(f"[bot_loop] Reconciled {len(reconciled)} resting orders")
+            except Exception as e:
+                print(f"[bot_loop] Reconcile error: {e}")
+
         try:
             print(f"[bot_loop] Starting scan #{bot_state.get('scan_count', 0) + 1}...")
             if settings.trading_mode == "live" and client:
