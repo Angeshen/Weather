@@ -686,6 +686,7 @@ def exit_losing_positions(current_markets: list, client=None) -> list[dict]:
         ticker = trade["ticker"]
         market = price_lookup.get(ticker)
         if not market:
+            print(f"[exit_check] {ticker}: no price data (lookup keys: {list(price_lookup.keys())[:5]}...)")
             continue
 
         entry_price = trade.get("market_price", 0)
@@ -694,6 +695,7 @@ def exit_losing_positions(current_markets: list, client=None) -> list[dict]:
         side = trade.get("side", "yes")
 
         if not entry_price or not contracts or not cost:
+            print(f"[exit_check] {ticker}: missing data entry={entry_price} contracts={contracts} cost={cost}")
             continue
 
         # Skip early exit for penny contracts — bid/ask spread is pure noise
@@ -804,6 +806,7 @@ def exit_losing_positions(current_markets: list, client=None) -> list[dict]:
 
         model_prob = trade.get("model_prob", 0) or 0
         stop_threshold = _exit_loss_threshold(model_prob)
+        print(f"[exit_check] {ticker}: bid={current_bid:.2f} entry={entry_price:.2f} loss={loss_pct:.1%} threshold={stop_threshold:.0%} model_prob={model_prob:.2f}")
         if loss_pct < stop_threshold:
             continue  # Position is fine, hold
 
