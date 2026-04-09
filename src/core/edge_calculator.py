@@ -247,7 +247,7 @@ def evaluate_market(market: dict, forecast: dict, bankroll: float) -> dict | Non
     gap = abs(forecast_mean - threshold) if forecast_mean and threshold else 99.0
     if forecast_mean and threshold:
         gap = abs(forecast_mean - threshold)
-        min_buffer = 0.10 if market_type == "precipitation" else 1.0
+        min_buffer = 0.10 if market_type == "precipitation" else (3.0 if market_type == "low_temp" else 1.0)
         if gap < min_buffer:
             print(f"[filter] {ticker}: REJECTED — buffer {gap:.1f} < {min_buffer} (mean={forecast_mean:.1f}, thresh={threshold})")
             return None
