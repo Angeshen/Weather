@@ -599,7 +599,31 @@ def reconcile_resting_orders(client) -> list[dict]:
                 else:
                     # Partial fill — keep the trade but cancel unfilled remainder
                     # Fill count was already synced above
-                    print(f"[reconcile] Partial fill on {trade['ticker']}: {filled_int}/{db_contracts} filled, cancelled remaining")
+                    unfilled = db_contracts - filled_int
+                    print(f"[reconcile] Partial fill on {trade['ticker']}: {filled_int}/{db_contracts} filled, cancelled remaining {unfilled}")
+
+                    # Re-submit unfilled remainder at a slightly better price
+                    if unfilled > 0:
+                        try:
+                            market_price = trade.get("market_price") or 0
+                            # Bump price 2¢ for better fill rate
+                            resubmit_cents = int(market_price * 100) + 2
+                            resubmit_cents = min(resubmit_cents, 95)  # cap at 95¢
+                            resp = client.place_order(
+                                ticker=trade["ticker"],
+                                side=trade.get("side", "yes"),
+                                quantity=unfilled,
+                                price_cents=resubmit_cents,
+                                order_type="limit",
+                            )
+                            new_order = resp.get("order", {})
+                            new_order_id = new_order.get("order_id", "")
+                            if new_order_id:
+                                print(f"[reconcile] Re-submitted {unfilled} contracts for {trade['ticker']} at {resubmit_cents}¢, order={new_order_id}")
+                            else:
+                                print(f"[reconcile] Re-submit for {trade['ticker']} failed: {resp}")
+                        except Exception as e:
+                            print(f"[reconcile] Re-submit error for {trade['ticker']}: {e}")
 
                 cancelled.append({"trade_id": trade["id"], "ticker": trade["ticker"], "order_id": order_id})
                 try:
