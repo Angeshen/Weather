@@ -811,6 +811,14 @@ def exit_losing_positions(current_markets: list, client=None) -> list[dict]:
         if loss_pct < stop_threshold:
             continue  # Position is fine, hold
 
+        # Overnight protection: skip stop-loss between 12am-8am ET (4am-12pm UTC)
+        # Bids are unreliable during low-liquidity overnight hours
+        now_utc = datetime.now(timezone.utc)
+        et_hour = (now_utc.hour - 4) % 24  # Simple UTC to ET offset
+        if 0 <= et_hour < 8:
+            print(f"[exit_check] {ticker}: SKIP overnight stop-loss (ET hour={et_hour})")
+            continue
+
         # Exit the position (loss)
         realized_pnl = round(current_value - cost, 2)
 
