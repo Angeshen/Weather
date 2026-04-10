@@ -665,6 +665,10 @@ def fetch_open_position_prices(client) -> list[dict]:
     return markets
 
 
+# Track consecutive stop-loss triggers per ticker — must hit threshold 2x in a row
+_stop_loss_counts: dict[str, int] = {}
+
+
 def exit_losing_positions(current_markets: list, client=None) -> list[dict]:
     """
     Check open trades against current market prices.
@@ -809,6 +813,7 @@ def exit_losing_positions(current_markets: list, client=None) -> list[dict]:
         stop_threshold = _exit_loss_threshold(model_prob)
         print(f"[exit_check] {ticker}: bid={current_bid:.2f} entry={entry_price:.2f} loss={loss_pct:.1%} threshold={stop_threshold:.0%} model_prob={model_prob:.2f}")
         if loss_pct < stop_threshold:
+            _stop_loss_counts.pop(ticker, None)  # Reset if recovered
             continue  # Position is fine, hold
 
         # Overnight protection: skip stop-loss between 12am-8am ET (4am-12pm UTC)
@@ -819,7 +824,26 @@ def exit_losing_positions(current_markets: list, client=None) -> list[dict]:
             print(f"[exit_check] {ticker}: SKIP overnight stop-loss (ET hour={et_hour})")
             continue
 
+        # Spread check: if bid-ask spread is too wide, the bid is unreliable
+        # Don't sell into a thin book where the bid is artificially depressed
+        if side == "yes":
+            exit_ask_check = market.get("yes_ask") or 0
+        else:
+            exit_ask_check = market.get("no_ask") or 0
+        spread = (exit_ask_check - current_bid) if exit_ask_check and current_bid else 99
+        if spread > 0.15:
+            print(f"[exit_check] {ticker}: SKIP stop-loss — wide spread {spread:.2f} (bid={current_bid:.2f} ask={exit_ask_check:.2f})")
+            continue
+
+        # Consecutive trigger: only exit if loss persisted across 2+ checks
+        # Prevents selling on momentary bid blips
+        _stop_loss_counts[ticker] = _stop_loss_counts.get(ticker, 0) + 1
+        if _stop_loss_counts[ticker] < 2:
+            print(f"[exit_check] {ticker}: stop-loss trigger {_stop_loss_counts[ticker]}/2 — waiting for confirmation")
+            continue
+
         # Exit the position (loss)
+        _stop_loss_counts.pop(ticker, None)  # Reset counter after exit
         realized_pnl = round(current_value - cost, 2)
 
         if settings.trading_mode == "live" and client:
