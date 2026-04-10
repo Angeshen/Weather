@@ -193,6 +193,12 @@ def settle_open_trades() -> dict:
             "trade_id": trade["id"],
             "ticker": ticker,
             "city": trade.get("city", "?"),
+            "target_date": trade.get("target_date", ""),
+            "side": trade.get("side", "yes"),
+            "threshold": threshold,
+            "actual": actual,
+            "forecast_mean": forecast_mean,
+            "unit": "in" if market_type == "precipitation" else "°F",
             "won": won,
             "pnl": pnl,
         })
