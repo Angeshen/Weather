@@ -186,9 +186,6 @@ def settle_open_trades() -> dict:
         except Exception:
             pass
 
-        # Update daily P&L (uses today's date, not trade target date)
-        _update_daily_pnl(pnl, won)
-
         unit = "in" if market_type == "precipitation" else "°F"
         forecast_mean = trade.get("forecast_mean")
         model_error = round(forecast_mean - actual, 1) if forecast_mean else None
@@ -221,6 +218,10 @@ def settle_open_trades() -> dict:
         log_bankroll(new_bankroll, f"Settled {settled} trades, P&L: ${total_pnl:+.2f}")
 
     conn.close()
+
+    # Update daily P&L after DB is released (avoids "database is locked")
+    for r in results:
+        _update_daily_pnl(r["pnl"], r["won"])
 
     return {
         "settled": settled,
