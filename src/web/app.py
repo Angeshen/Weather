@@ -912,11 +912,16 @@ def _settlement_loop():
     while True:
         _time.sleep(900)  # 15 minutes
         try:
+            print("[settlement] Checking for settlements...")
             results = settle_open_trades()
-            if results.get("settled", 0) > 0:
+            settled_count = results.get("settled", 0)
+            print(f"[settlement] Result: {settled_count} settled, {results.get('wins', 0)}W/{results.get('losses', 0)}L")
+            if settled_count > 0:
                 notify_settlement(results)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[settlement] ERROR: {e}")
+            import traceback
+            traceback.print_exc()
 
 _settlement_thread = threading.Thread(target=_settlement_loop, daemon=True)
 _settlement_thread.start()
