@@ -372,6 +372,14 @@ def evaluate_market(market: dict, forecast: dict, bankroll: float) -> dict | Non
         else:
             contracts = raw_contracts
 
+        # Tight-gap low-temp trades: reduce to 25% size when forecast-threshold
+        # gap is < 4°F. Low-temp forecasts have ~3° error margin, so tight gaps
+        # are essentially coin flips. Still trade them, just smaller.
+        if market_type == "low_temp" and gap < 4.0:
+            reduced = max(1, int(contracts * 0.25))
+            print(f"[sizing] {ticker}/{side}: tight low-temp gap {gap:.1f}°F — reducing {contracts}→{reduced} contracts")
+            contracts = reduced
+
         # Recalculate actual position size based on capped contracts
         actual_size = round(contracts * price, 2)
 
