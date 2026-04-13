@@ -57,8 +57,9 @@ class Settings(BaseSettings):
         # KXHIGHT (T-suffix) high temp cities
         "KXHIGHTHOU", "KXHIGHTPHX", "KXHIGHTBOS", "KXHIGHTDAL",
         "KXHIGHTDC", "KXHIGHTSEA", "KXHIGHTPHI",
-        # KXLOWT low temp cities
-        "KXLOWTNYC", "KXLOWTLAX", "KXLOWTHOU", "KXLOWTBOS",
+        # KXLOWT low temp cities (KXLOWTLAX removed — LAX coastal station makes
+        # low temp forecasts unreliable, consistent 3-5°F errors)
+        "KXLOWTNYC", "KXLOWTHOU", "KXLOWTBOS",
         "KXLOWTDC", "KXLOWTMIA",
     ]
 
