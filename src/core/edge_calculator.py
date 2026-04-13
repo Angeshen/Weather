@@ -90,16 +90,16 @@ def compute_position_size(win_prob: float, market_price: float, bankroll: float,
     if market_price <= 0 or market_price >= 1:
         return 0.0
 
-    # Base: 4% of bankroll per trade
-    base_pct = 0.04
-    position = base_pct * bankroll
+    # Use Kelly fraction from settings (dashboard-tunable)
+    kelly_frac = settings.kelly_fraction / 100.0 if settings.kelly_fraction > 1 else settings.kelly_fraction
+    position = kelly_frac * bankroll
 
     # Scale up slightly for higher edge (more confident trades get more $)
     edge = win_prob - market_price
     if edge >= 0.15:
-        position *= 1.5   # 6% of bankroll for strong edge
+        position *= 1.5
     elif edge >= 0.10:
-        position *= 1.25  # 5% of bankroll for good edge
+        position *= 1.25
 
     # Scale down for near-expiry markets where forecast has less value
     if days_to_expiry <= 0:
