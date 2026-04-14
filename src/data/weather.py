@@ -69,26 +69,36 @@ def fetch_ensemble_forecast(lat: float, lon: float, target_date: str,
 
     deterministic_values = []
     for model in _MODELS:
-        try:
-            params = {
-                "latitude": lat,
-                "longitude": lon,
-                "daily": variable,
-                "start_date": target_date,
-                "end_date": target_date,
-                "temperature_unit": "fahrenheit",
-                "models": model,
-                "timezone": "America/New_York",
-            }
-            with httpx.Client(timeout=15.0) as client:
-                resp = client.get(_FORECAST_URL, params=params)
-                if resp.status_code != 200:
-                    continue
-                vals = resp.json().get("daily", {}).get(variable, [])
-                if vals and vals[0] is not None:
-                    deterministic_values.append(float(vals[0]))
-        except Exception:
-            continue
+        for attempt in range(2):  # 1 retry on failure
+            try:
+                params = {
+                    "latitude": lat,
+                    "longitude": lon,
+                    "daily": variable,
+                    "start_date": target_date,
+                    "end_date": target_date,
+                    "temperature_unit": "fahrenheit",
+                    "models": model,
+                    "timezone": "America/New_York",
+                }
+                with httpx.Client(timeout=15.0) as client:
+                    resp = client.get(_FORECAST_URL, params=params)
+                    if resp.status_code == 429:
+                        # Rate limited — back off and retry
+                        time.sleep(2)
+                        continue
+                    if resp.status_code != 200:
+                        break
+                    vals = resp.json().get("daily", {}).get(variable, [])
+                    if vals and vals[0] is not None:
+                        deterministic_values.append(float(vals[0]))
+                    break  # success — no retry needed
+            except Exception:
+                if attempt == 0:
+                    time.sleep(1)
+                continue
+        # Small delay between models to avoid rate limits on free tier
+        time.sleep(0.3)
 
     if not deterministic_values:
         return []
