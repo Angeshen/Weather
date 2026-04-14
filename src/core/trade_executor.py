@@ -619,7 +619,35 @@ def reconcile_resting_orders(client) -> list[dict]:
                             new_order = resp.get("order", {})
                             new_order_id = new_order.get("order_id", "")
                             if new_order_id:
-                                print(f"[reconcile] Re-submitted {unfilled} contracts for {trade['ticker']} at {resubmit_cents}¢, order={new_order_id}")
+                                # Check how many filled immediately
+                                try:
+                                    raw_fill = (new_order.get("fill_count_fp") or new_order.get("filled_count")
+                                                or new_order.get("quantity_filled") or "0")
+                                    new_filled = int(float(str(raw_fill)))
+                                except (ValueError, TypeError):
+                                    new_filled = 0
+
+                                # Update the trade: add newly filled contracts and track new order
+                                total_contracts = filled_int + new_filled
+                                resubmit_price = resubmit_cents / 100.0
+                                # Cost = original filled cost + new filled cost
+                                total_cost = round(filled_int * market_price + new_filled * resubmit_price, 2)
+                                conn2 = get_db()
+                                conn2.execute(
+                                    "UPDATE trades SET order_id=?, contracts=?, filled_contracts=?, position_size_usd=? WHERE id=?",
+                                    (new_order_id, total_contracts, total_contracts, total_cost, trade["id"])
+                                )
+                                conn2.commit()
+                                conn2.close()
+
+                                # Deduct additional cost from bankroll
+                                extra_cost = round(new_filled * resubmit_price, 2)
+                                if extra_cost > 0:
+                                    new_br = get_current_bankroll() - extra_cost
+                                    log_bankroll(new_br, f"Resubmit fill for #{trade['id']} {trade['ticker']}: +{new_filled} contracts at {resubmit_cents}¢")
+
+                                remaining = unfilled - new_filled
+                                print(f"[reconcile] Re-submitted {unfilled} for {trade['ticker']} at {resubmit_cents}¢, order={new_order_id}, filled={new_filled}, remaining={remaining}")
                             else:
                                 print(f"[reconcile] Re-submit for {trade['ticker']} failed: {resp}")
                         except Exception as e:
@@ -636,9 +664,9 @@ def reconcile_resting_orders(client) -> list[dict]:
                         )
                     else:
                         _send_message(
-                            f"⚠️ <b>Partial Fill — Remainder Cancelled</b>\n"
+                            f"🔄 <b>Partial Fill — Resubmitting Remainder</b>\n"
                             f"<code>{trade['ticker']}</code> — {filled_int}/{db_contracts} contracts filled\n"
-                            f"Keeping {filled_int} contracts, cancelled unfilled remainder"
+                            f"Resubmitting {db_contracts - filled_int} contracts at better price"
                         )
                 except Exception:
                     pass
