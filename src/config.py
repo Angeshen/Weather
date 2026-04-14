@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     # Telegram notifications (optional)
     telegram_bot_token: str = Field(default="", alias="TELEGRAM_BOT_TOKEN")
     telegram_chat_id: str = Field(default="", alias="TELEGRAM_CHAT_ID")
-    telegram_daily_summary_hour: int = Field(default=20, alias="TELEGRAM_DAILY_SUMMARY_HOUR")
+    telegram_daily_summary_hour: int = Field(default=23, alias="TELEGRAM_DAILY_SUMMARY_HOUR")
     telegram_daily_summary_minute: int = Field(default=30, alias="TELEGRAM_DAILY_SUMMARY_MINUTE")
 
     # Max open trades per city (prevents over-concentration in one location)
