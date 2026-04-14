@@ -555,6 +555,12 @@ def reconcile_resting_orders(client) -> list[dict]:
 
             filled_int = int(filled)
 
+            # Get original requested quantity from Kalshi order (not DB, which may already be synced down)
+            try:
+                original_qty = int(float(str(order.get("count", 0) or order.get("quantity", 0) or 0)))
+            except (ValueError, TypeError):
+                original_qty = 0
+
             # Sync fill count: if actual fill differs from DB, update contracts/cost
             db_contracts = trade.get("contracts", 0) or 0
             if filled_int > 0 and filled_int != db_contracts:
@@ -598,9 +604,10 @@ def reconcile_resting_orders(client) -> list[dict]:
                         log_bankroll(new_bankroll, f"Cancelled resting order #{order_id} on {trade['ticker']} — refunded ${refund:.2f}")
                 else:
                     # Partial fill — keep the trade but cancel unfilled remainder
-                    # Fill count was already synced above
-                    unfilled = db_contracts - filled_int
-                    print(f"[reconcile] Partial fill on {trade['ticker']}: {filled_int}/{db_contracts} filled, cancelled remaining {unfilled}")
+                    # Use original order qty from Kalshi to compute true unfilled
+                    order_total = original_qty if original_qty > filled_int else db_contracts
+                    unfilled = order_total - filled_int
+                    print(f"[reconcile] Partial fill on {trade['ticker']}: {filled_int}/{order_total} filled, cancelled remaining {unfilled}")
 
                     # Re-submit unfilled remainder at a slightly better price
                     if unfilled > 0:
@@ -665,8 +672,8 @@ def reconcile_resting_orders(client) -> list[dict]:
                     else:
                         _send_message(
                             f"🔄 <b>Partial Fill — Resubmitting Remainder</b>\n"
-                            f"<code>{trade['ticker']}</code> — {filled_int}/{db_contracts} contracts filled\n"
-                            f"Resubmitting {db_contracts - filled_int} contracts at better price"
+                            f"<code>{trade['ticker']}</code> — {filled_int}/{order_total} contracts filled\n"
+                            f"Resubmitting {order_total - filled_int} contracts at better price"
                         )
                 except Exception:
                     pass
