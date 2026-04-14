@@ -111,6 +111,15 @@ def run_scan():
         # Record price for momentum tracking across scan cycles
         record_price(market.get("ticker", ""), market.get("yes_ask"))
 
+        # Skip expired markets before wasting API calls on forecasts
+        try:
+            from datetime import date as _date
+            td = _date.fromisoformat(market.get("target_date", ""))
+            if (td - _date.today()).days < 0:
+                continue
+        except (ValueError, TypeError):
+            pass
+
         try:
             forecast = get_forecast_for_city(
                 series_ticker=market["series_ticker"],
@@ -226,6 +235,15 @@ def bot_loop():
             scan_fetched_at = datetime.now(timezone.utc).isoformat()
 
             for market in markets:
+                # Skip expired markets before wasting API calls
+                try:
+                    from datetime import date as _date
+                    td = _date.fromisoformat(market.get("target_date", ""))
+                    if (td - _date.today()).days < 0:
+                        continue
+                except (ValueError, TypeError):
+                    pass
+
                 try:
                     forecast = get_forecast_for_city(
                         series_ticker=market["series_ticker"],
