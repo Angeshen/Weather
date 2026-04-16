@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     # Scanning
     scan_interval_seconds: int = Field(default=300, alias="SCAN_INTERVAL_SECONDS")
 
+    # Dashboard authentication
+    dashboard_password: str = Field(default="", alias="DASHBOARD_PASSWORD")
+    secret_key: str = Field(default="kalshi-bot-secret-change-me", alias="SECRET_KEY")
+
     # Telegram notifications (optional)
     telegram_bot_token: str = Field(default="", alias="TELEGRAM_BOT_TOKEN")
     telegram_chat_id: str = Field(default="", alias="TELEGRAM_CHAT_ID")

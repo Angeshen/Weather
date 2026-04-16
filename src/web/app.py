@@ -8,7 +8,8 @@ import threading
 import time
 from datetime import datetime, timezone
 
-from flask import Flask, jsonify, render_template, request
+import functools
+from flask import Flask, jsonify, render_template, request, session, redirect, url_for
 
 from src.config import settings
 from src.data.kalshi_client import KalshiClient
@@ -64,7 +65,46 @@ app = Flask(
     template_folder="templates",
     static_folder="static",
 )
+app.secret_key = settings.secret_key
 
+
+# ── Authentication ──────────────────────────────────────────────────────────
+@app.before_request
+def require_auth():
+    """Block all requests unless authenticated (when password is set)."""
+    if not settings.dashboard_password:
+        return  # no password configured — open access (backward compat)
+    if request.path in ("/login", "/favicon.ico") or request.path.startswith("/static"):
+        return
+    if session.get("authenticated"):
+        return
+    if request.is_json or request.path.startswith("/api/"):
+        return jsonify({"error": "unauthorized"}), 401
+    return redirect(url_for("login_page"))
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login_page():
+    if not settings.dashboard_password:
+        return redirect("/")
+    error = None
+    if request.method == "POST":
+        pw = request.form.get("password", "")
+        if pw == settings.dashboard_password:
+            session["authenticated"] = True
+            session.permanent = True
+            return redirect("/")
+        error = "Wrong password"
+    return render_template("login.html", error=error)
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login_page"))
+
+
+# ── Bot state ───────────────────────────────────────────────────────────────
 # Bot state
 bot_state = {
     "running": False,
