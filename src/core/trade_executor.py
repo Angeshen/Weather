@@ -369,7 +369,7 @@ def execute_live_trade(signal: dict, client: KalshiClient) -> dict:
             actual_price,
             signal["edge"],
             signal["confidence"],
-            filled_contracts,
+            signal["contracts"],
             actual_price_cents,
             actual_size,
             signal.get("forecast_mean"),
@@ -555,29 +555,27 @@ def reconcile_resting_orders(client) -> list[dict]:
 
             filled_int = int(filled)
 
-            # Get original requested quantity from Kalshi order (not DB, which may already be synced down)
-            try:
-                original_qty = int(float(str(order.get("count", 0) or order.get("quantity", 0) or 0)))
-            except (ValueError, TypeError):
-                original_qty = 0
+            # Original requested quantity is stored in `contracts` column;
+            # `filled_contracts` tracks how many actually filled.
+            original_qty = trade.get("contracts", 0) or 0
+            db_filled = trade.get("filled_contracts", 0) or 0
 
-            # Sync fill count: if actual fill differs from DB, update contracts/cost
-            db_contracts = trade.get("contracts", 0) or 0
-            if filled_int > 0 and filled_int != db_contracts:
+            # Sync fill count: if actual fill differs from DB filled_contracts, update
+            if filled_int > 0 and filled_int != db_filled:
                 market_price = trade.get("market_price") or 0
                 actual_cost = round(filled_int * market_price, 2)
                 old_cost = trade.get("position_size_usd") or 0
                 cost_diff = actual_cost - old_cost
                 conn = get_db()
                 conn.execute(
-                    "UPDATE trades SET contracts=?, filled_contracts=?, position_size_usd=? WHERE id=?",
-                    (filled_int, filled_int, actual_cost, trade["id"])
+                    "UPDATE trades SET filled_contracts=?, position_size_usd=? WHERE id=?",
+                    (filled_int, actual_cost, trade["id"])
                 )
                 conn.commit()
                 conn.close()
                 if abs(cost_diff) >= 0.01:
                     new_br = get_current_bankroll() - cost_diff
-                    log_bankroll(new_br, f"Synced fill for #{trade['id']} {trade['ticker']}: {db_contracts}→{filled_int} contracts, cost {old_cost:.2f}→{actual_cost:.2f}")
+                    log_bankroll(new_br, f"Synced fill for #{trade['id']} {trade['ticker']}: {db_filled}→{filled_int} filled of {original_qty}, cost {old_cost:.2f}→{actual_cost:.2f}")
 
             # Cancel resting/pending orders (fully or partially unfilled)
             if order_status in ("resting", "pending"):
@@ -604,10 +602,9 @@ def reconcile_resting_orders(client) -> list[dict]:
                         log_bankroll(new_bankroll, f"Cancelled resting order #{order_id} on {trade['ticker']} — refunded ${refund:.2f}")
                 else:
                     # Partial fill — keep the trade but cancel unfilled remainder
-                    # Use original order qty from Kalshi to compute true unfilled
-                    order_total = original_qty if original_qty > filled_int else db_contracts
-                    unfilled = order_total - filled_int
-                    print(f"[reconcile] Partial fill on {trade['ticker']}: {filled_int}/{order_total} filled, cancelled remaining {unfilled}")
+                    # original_qty comes from the `contracts` column (set at trade creation)
+                    unfilled = original_qty - filled_int
+                    print(f"[reconcile] Partial fill on {trade['ticker']}: {filled_int}/{original_qty} filled, cancelled remaining {unfilled}")
 
                     # Re-submit unfilled remainder at a slightly better price
                     if unfilled > 0:
@@ -641,8 +638,8 @@ def reconcile_resting_orders(client) -> list[dict]:
                                 total_cost = round(filled_int * market_price + new_filled * resubmit_price, 2)
                                 conn2 = get_db()
                                 conn2.execute(
-                                    "UPDATE trades SET order_id=?, contracts=?, filled_contracts=?, position_size_usd=? WHERE id=?",
-                                    (new_order_id, total_contracts, total_contracts, total_cost, trade["id"])
+                                    "UPDATE trades SET order_id=?, filled_contracts=?, position_size_usd=? WHERE id=?",
+                                    (new_order_id, total_contracts, total_cost, trade["id"])
                                 )
                                 conn2.commit()
                                 conn2.close()
@@ -672,8 +669,8 @@ def reconcile_resting_orders(client) -> list[dict]:
                     else:
                         _send_message(
                             f"🔄 <b>Partial Fill — Resubmitting Remainder</b>\n"
-                            f"<code>{trade['ticker']}</code> — {filled_int}/{order_total} contracts filled\n"
-                            f"Resubmitting {order_total - filled_int} contracts at better price"
+                            f"<code>{trade['ticker']}</code> — {filled_int}/{original_qty} contracts filled\n"
+                            f"Resubmitting {original_qty - filled_int} contracts at better price"
                         )
                 except Exception:
                     pass
@@ -754,7 +751,7 @@ def exit_losing_positions(current_markets: list, client=None) -> list[dict]:
             continue
 
         entry_price = trade.get("market_price", 0)
-        contracts = trade.get("contracts", 0)
+        contracts = trade.get("filled_contracts") or trade.get("contracts", 0)
         cost = trade.get("position_size_usd", 0)
         side = trade.get("side", "yes")
 
@@ -1083,7 +1080,7 @@ def get_open_trades_with_current_prices(last_markets: list, client=None) -> list
             current_price = current.get("no_bid") or current.get("no_ask")
 
         entry_price = trade.get("market_price", 0)
-        contracts = trade.get("contracts", 0)
+        contracts = trade.get("filled_contracts") or trade.get("contracts", 0)
 
         if current_price and entry_price and contracts:
             unrealized_pnl = round((current_price - entry_price) * contracts, 2)

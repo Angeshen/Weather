@@ -153,7 +153,7 @@ def settle_open_trades() -> dict:
         # Win: profit = contracts * $1 - cost
         # Loss: lose entire stake = -cost
         cost = trade["position_size_usd"]
-        contracts = trade.get("contracts") or 0
+        contracts = trade.get("filled_contracts") or trade.get("contracts") or 0
         if won:
             pnl = round(contracts * 1.0 - cost, 2)
             wins += 1
