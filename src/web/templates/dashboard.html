@@ -533,8 +533,9 @@ async function refreshOpenPositions(openTrades) {
             }
         }
         // Win target = profit if settles in our favor
-        const target = (t.contracts && t.position_size_usd)
-            ? `<span class="pnl-pos">+${usd(t.contracts - t.position_size_usd)}</span>`
+        const ct = t.filled_contracts || t.contracts;
+        const target = (ct && t.position_size_usd)
+            ? `<span class="pnl-pos">+${usd(ct - t.position_size_usd)}</span>`
             : '—';
         const volStr = t.volume != null ? Number(t.volume).toLocaleString() : '—';
         const forecastStr = t.forecast_mean != null ? `${t.forecast_mean}°` : '—';
@@ -549,7 +550,7 @@ async function refreshOpenPositions(openTrades) {
             <td style="font-size:11px;font-weight:600;color:${t.mode==='live'?'var(--green)':'var(--text-dim)'}">${(t.mode||'paper').toUpperCase()}</td>
             <td style="color:var(--text-dim)">${entryPct}</td>
             <td style="font-weight:600">${curPct}</td>
-            <td>${t.contracts||'?'}</td>
+            <td>${ct||'?'}</td>
             <td>${t.position_size_usd ? usd(t.position_size_usd) : '—'}</td>
             <td>${unrealStr}</td>
             <td>${target}</td>
@@ -607,8 +608,9 @@ async function refreshTrades() {
             const unrealStr = unreal != null ? `<span class="${unreal >= 0 ? 'pnl-pos' : 'pnl-neg'}">${unreal >= 0 ? '+' : ''}${usd(unreal)}</span>` : '—';
             // Win Profit = what you make if contract resolves in your favor at expiry
             // Colored red if position is currently moving against you (unrealized negative)
-            const winProfitVal = (t.status === 'open' && t.contracts && t.position_size_usd)
-                ? t.contracts * 1.0 - t.position_size_usd
+            const ctPerf = t.filled_contracts || t.contracts;
+            const winProfitVal = (t.status === 'open' && ctPerf && t.position_size_usd)
+                ? ctPerf * 1.0 - t.position_size_usd
                 : null;
             const winProfitColor = (unreal != null && unreal < 0) ? 'pnl-neg' : 'pnl-pos';
             const winProfit = winProfitVal != null
