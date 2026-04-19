@@ -657,6 +657,24 @@ def reconcile_resting_orders(client) -> list[dict]:
                         except Exception as e:
                             print(f"[reconcile] Re-submit error for {trade['ticker']}: {e}")
 
+                    # Always ensure the trade reflects actual partial fill even if resubmit failed
+                    # Update filled_contracts and cost to match what Kalshi actually filled
+                    market_price = trade.get("market_price") or 0
+                    partial_cost = round(filled_int * market_price, 2)
+                    conn3 = get_db()
+                    conn3.execute(
+                        "UPDATE trades SET filled_contracts=?, position_size_usd=? WHERE id=? AND status='open'",
+                        (filled_int, partial_cost, trade["id"])
+                    )
+                    conn3.commit()
+                    conn3.close()
+                    # Refund the difference between originally deducted cost and actual partial cost
+                    old_cost = trade.get("position_size_usd") or 0
+                    if old_cost > partial_cost:
+                        refund = round(old_cost - partial_cost, 2)
+                        new_br = get_current_bankroll() + refund
+                        log_bankroll(new_br, f"Partial fill refund #{trade['id']} {trade['ticker']}: {filled_int}/{original_qty} filled, refunded ${refund:.2f}")
+
                 cancelled.append({"trade_id": trade["id"], "ticker": trade["ticker"], "order_id": order_id})
                 try:
                     from src.core.notifications import _send_message
