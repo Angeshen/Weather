@@ -477,7 +477,10 @@ def get_stats() -> dict:
     open_trades = conn.execute("SELECT COUNT(*) FROM trades WHERE status = 'open'").fetchone()[0]
     settled = conn.execute("SELECT COUNT(*) FROM trades WHERE status = 'settled'").fetchone()[0]
     wins = conn.execute("SELECT COUNT(*) FROM trades WHERE status = 'settled' AND pnl_usd > 0").fetchone()[0]
-    total_pnl = conn.execute("SELECT COALESCE(SUM(pnl_usd), 0) FROM trades WHERE status = 'settled'").fetchone()[0]
+    # Derive total P&L from bankroll (source of truth) instead of summing trade records
+    # which may miss orphaned positions. bankroll already has open trade costs deducted,
+    # so total_pnl = bankroll - initial + open_trade_costs = what we've actually made/lost.
+    open_cost = conn.execute("SELECT COALESCE(SUM(position_size_usd), 0) FROM trades WHERE status = 'open'").fetchone()[0]
 
     # Current win/loss streak: count consecutive same-outcome trades from most recent
     streak = 0
@@ -502,7 +505,7 @@ def get_stats() -> dict:
         "wins": wins,
         "losses": settled - wins,
         "win_rate": (wins / settled * 100) if settled > 0 else 0,
-        "total_pnl": round(total_pnl, 2),
+        "total_pnl": round(get_current_bankroll() + open_cost - settings.initial_bankroll, 2),
         "daily_pnl": round(get_daily_loss_today(), 2),
         "bankroll": round(get_current_bankroll(), 2),
         "streak": streak,
