@@ -601,79 +601,27 @@ def reconcile_resting_orders(client) -> list[dict]:
                         new_bankroll = get_current_bankroll() + refund
                         log_bankroll(new_bankroll, f"Cancelled resting order #{order_id} on {trade['ticker']} — refunded ${refund:.2f}")
                 else:
-                    # Partial fill — keep the trade but cancel unfilled remainder
-                    # original_qty comes from the `contracts` column (set at trade creation)
-                    unfilled = original_qty - filled_int
-                    print(f"[reconcile] Partial fill on {trade['ticker']}: {filled_int}/{original_qty} filled, cancelled remaining {unfilled}")
-
-                    # Re-submit unfilled remainder at a slightly better price
-                    if unfilled > 0:
-                        try:
-                            market_price = trade.get("market_price") or 0
-                            # Bump price 2¢ for better fill rate
-                            resubmit_cents = int(market_price * 100) + 2
-                            resubmit_cents = min(resubmit_cents, 95)  # cap at 95¢
-                            resp = client.place_order(
-                                ticker=trade["ticker"],
-                                side=trade.get("side", "yes"),
-                                quantity=unfilled,
-                                price_cents=resubmit_cents,
-                                order_type="limit",
-                            )
-                            new_order = resp.get("order", {})
-                            new_order_id = new_order.get("order_id", "")
-                            if new_order_id:
-                                # Check how many filled immediately
-                                try:
-                                    raw_fill = (new_order.get("fill_count_fp") or new_order.get("filled_count")
-                                                or new_order.get("quantity_filled") or "0")
-                                    new_filled = int(float(str(raw_fill)))
-                                except (ValueError, TypeError):
-                                    new_filled = 0
-
-                                # Update the trade: add newly filled contracts and track new order
-                                total_contracts = filled_int + new_filled
-                                resubmit_price = resubmit_cents / 100.0
-                                # Cost = original filled cost + new filled cost
-                                total_cost = round(filled_int * market_price + new_filled * resubmit_price, 2)
-                                conn2 = get_db()
-                                conn2.execute(
-                                    "UPDATE trades SET order_id=?, filled_contracts=?, position_size_usd=? WHERE id=?",
-                                    (new_order_id, total_contracts, total_cost, trade["id"])
-                                )
-                                conn2.commit()
-                                conn2.close()
-
-                                # Deduct additional cost from bankroll
-                                extra_cost = round(new_filled * resubmit_price, 2)
-                                if extra_cost > 0:
-                                    new_br = get_current_bankroll() - extra_cost
-                                    log_bankroll(new_br, f"Resubmit fill for #{trade['id']} {trade['ticker']}: +{new_filled} contracts at {resubmit_cents}¢")
-
-                                remaining = unfilled - new_filled
-                                print(f"[reconcile] Re-submitted {unfilled} for {trade['ticker']} at {resubmit_cents}¢, order={new_order_id}, filled={new_filled}, remaining={remaining}")
-                            else:
-                                print(f"[reconcile] Re-submit for {trade['ticker']} failed: {resp}")
-                        except Exception as e:
-                            print(f"[reconcile] Re-submit error for {trade['ticker']}: {e}")
-
-                    # Always ensure the trade reflects actual partial fill even if resubmit failed
-                    # Update filled_contracts and cost to match what Kalshi actually filled
+                    # Partial fill — keep the filled portion, abandon the rest
+                    # No resubmit — it creates orphaned positions on Kalshi
                     market_price = trade.get("market_price") or 0
                     partial_cost = round(filled_int * market_price, 2)
-                    conn3 = get_db()
-                    conn3.execute(
-                        "UPDATE trades SET filled_contracts=?, position_size_usd=? WHERE id=? AND status='open'",
+                    old_cost = trade.get("position_size_usd") or 0
+
+                    conn2 = get_db()
+                    conn2.execute(
+                        "UPDATE trades SET filled_contracts=?, position_size_usd=? WHERE id=?",
                         (filled_int, partial_cost, trade["id"])
                     )
-                    conn3.commit()
-                    conn3.close()
-                    # Refund the difference between originally deducted cost and actual partial cost
-                    old_cost = trade.get("position_size_usd") or 0
+                    conn2.commit()
+                    conn2.close()
+
+                    # Refund the unfilled portion to bankroll
                     if old_cost > partial_cost:
                         refund = round(old_cost - partial_cost, 2)
                         new_br = get_current_bankroll() + refund
-                        log_bankroll(new_br, f"Partial fill refund #{trade['id']} {trade['ticker']}: {filled_int}/{original_qty} filled, refunded ${refund:.2f}")
+                        log_bankroll(new_br, f"Partial fill #{trade['id']} {trade['ticker']}: {filled_int}/{original_qty} filled, refunded ${refund:.2f}")
+
+                    print(f"[reconcile] Partial fill on {trade['ticker']}: {filled_int}/{original_qty} filled, keeping partial, no resubmit")
 
                 cancelled.append({"trade_id": trade["id"], "ticker": trade["ticker"], "order_id": order_id})
                 try:
@@ -686,9 +634,9 @@ def reconcile_resting_orders(client) -> list[dict]:
                         )
                     else:
                         _send_message(
-                            f"🔄 <b>Partial Fill — Resubmitting Remainder</b>\n"
-                            f"<code>{trade['ticker']}</code> — {filled_int}/{original_qty} contracts filled\n"
-                            f"Resubmitting {original_qty - filled_int} contracts at better price"
+                            f"� <b>Partial Fill — Keeping {filled_int}/{original_qty}</b>\n"
+                            f"<code>{trade['ticker']}</code>\n"
+                            f"Unfilled portion cancelled, refunded to bankroll"
                         )
                 except Exception:
                     pass
