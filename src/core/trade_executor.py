@@ -511,12 +511,12 @@ def get_stats() -> dict:
 
 def _exit_loss_threshold(model_prob: float = 0.0):
     """Confidence-tiered stop-loss.
-    ≥80% model prob: no stop-loss — high confidence, hold to settlement.
+    ≥80% model prob: 50% stop — wide leash but still protected from total loss.
     60-80%: 40% stop — room for swings but not unlimited risk.
     <60%: use dashboard setting (default 25%) — tight stop for risky scalps.
     """
     if model_prob >= 0.80:
-        return 999.0  # Effectively no stop-loss
+        return 0.50  # Wide leash but never hold to total loss
     elif model_prob >= 0.60:
         return 0.40
     else:
