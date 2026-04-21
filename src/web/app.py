@@ -115,7 +115,21 @@ bot_state = {
     "scan_count": 0,
     "confidence_history": {},  # ticker -> list of (timestamp, confidence) tuples
     "last_errors": [],  # recent forecast/scan errors for dashboard display
+    "activity_log": [],  # recent bot events for dashboard live feed
 }
+
+_ACTIVITY_LOG_MAX = 200
+
+def log_activity(msg: str, level: str = "info"):
+    """Append an event to the in-memory activity log for the dashboard."""
+    entry = {
+        "time": datetime.now(timezone.utc).isoformat(),
+        "msg": msg,
+        "level": level,  # info, success, warn, error
+    }
+    bot_state["activity_log"].append(entry)
+    if len(bot_state["activity_log"]) > _ACTIVITY_LOG_MAX:
+        bot_state["activity_log"] = bot_state["activity_log"][-_ACTIVITY_LOG_MAX:]
 
 
 def run_scan():
@@ -227,6 +241,7 @@ def bot_loop():
     """Background bot loop."""
     init_db()
     log_bankroll(get_current_bankroll(), "Bot started via GUI")
+    log_activity("Bot started", "success")
 
     # Auto-discover active Kalshi series on startup — merge with hardcoded list
     # so we never lose our known series, but can pick up new ones Kalshi adds
@@ -259,6 +274,8 @@ def bot_loop():
                 reconciled = reconcile_resting_orders(client)
                 if reconciled:
                     print(f"[bot_loop] Reconciled {len(reconciled)} resting orders")
+                    for rc in reconciled:
+                        log_activity(f"Reconciled: {rc.get('ticker','?')} (order cancelled/updated)", "warn")
             except Exception as e:
                 print(f"[bot_loop] Reconcile error: {e}")
 
@@ -269,6 +286,7 @@ def bot_loop():
             else:
                 markets = scan_weather_markets_public()
             print(f"[bot_loop] Scan found {len(markets)} markets")
+            log_activity(f"Scan #{bot_state.get('scan_count', 0) + 1}: found {len(markets)} markets")
 
             bankroll = get_current_bankroll()
             signals = []
@@ -368,6 +386,7 @@ def bot_loop():
                     result = execute_trade(signal, client)
                     if result.get("status") not in ("blocked", "failed"):
                         executed += 1
+                        log_activity(f"Trade executed: {signal['ticker']} {signal.get('side','').upper()} @ {signal.get('entry_price',0):.0%} — edge {signal.get('edge',0):.1%}", "success")
                     elif result.get("status") == "blocked":
                         reason = result.get("reason", "Unknown")
                         if "Already have open" not in reason:
@@ -377,6 +396,10 @@ def bot_loop():
             try:
                 settle_results = settle_open_trades()
                 if settle_results.get("settled", 0) > 0:
+                    for r in settle_results.get("results", []):
+                        pnl = r.get('pnl', 0)
+                        lvl = 'success' if pnl > 0 else 'error'
+                        log_activity(f"Settled: {r.get('ticker','?')} P&L ${pnl:+.2f}", lvl)
                     notify_settlement(settle_results)
                     # Big win celebration + streak milestone
                     for r in settle_results.get("results", []):
@@ -392,7 +415,10 @@ def bot_loop():
 
             # Exit positions that have lost threshold% of value
             try:
-                exit_losing_positions(clean_markets, client)
+                exits = exit_losing_positions(clean_markets, client)
+                if exits:
+                    for ex in exits:
+                        log_activity(f"Exit: {ex.get('ticker','?')} P&L ${ex.get('pnl',0):+.2f} ({ex.get('exit_type','loss')})", "warn")
             except Exception:
                 pass
 
@@ -431,10 +457,16 @@ def bot_loop():
             bot_state["last_markets"] = clean_markets
             bot_state["scan_count"] += 1
 
+            if signals:
+                log_activity(f"{len(signals)} signal(s): {', '.join(s['ticker'].split('-')[0] for s in signals[:5])}", "info")
+            if executed:
+                log_activity(f"Executed {executed} trade(s)", "success")
+
         except Exception as e:
             import traceback
             print(f"[bot_loop] SCAN ERROR: {e}")
             print(traceback.format_exc())
+            log_activity(f"Scan error: {e}", "error")
 
         # Heartbeat check — runs every loop iteration even if scan fails
         try:
@@ -470,6 +502,8 @@ def bot_loop():
                         exited = exit_losing_positions(fresh_markets, client)
                         if exited:
                             print(f"[exit_monitor] Exited {len(exited)} positions")
+                            for ex in exited:
+                                log_activity(f"Exit: {ex.get('ticker','?')} P&L ${ex.get('pnl',0):+.2f} ({ex.get('exit_type','loss')})", "warn")
                 except Exception as e:
                     import traceback
                     print(f"[exit_monitor] ERROR: {e}")
@@ -509,6 +543,16 @@ def api_status():
         "next_model_run_mins": int(next_window_mins),
         "last_errors": bot_state.get("last_errors", []),
     })
+
+
+@app.route("/api/activity")
+def api_activity():
+    """Return recent bot activity log entries."""
+    since = request.args.get("since", "")
+    entries = bot_state["activity_log"]
+    if since:
+        entries = [e for e in entries if e["time"] > since]
+    return jsonify(entries[-50:])
 
 
 @app.route("/api/stats")

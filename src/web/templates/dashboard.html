@@ -170,9 +170,9 @@
             <div class="stat-card"><div class="label">Open Trades</div><div class="value" id="statOpen">0</div></div>
             <div class="stat-card"><div class="label">Win Rate</div><div class="value" id="statWinRate">0%</div></div>
             <div class="stat-card"><div class="label">Total Trades</div><div class="value" id="statTotal">0</div></div>
-            <div class="stat-card"><div class="label">Markets Found</div><div class="value" id="statMarkets">0</div></div>
-            <div class="stat-card"><div class="label">Active Signals</div><div class="value green" id="statSignals">0</div></div>
-            <div class="stat-card"><div class="label">Scans</div><div class="value" id="statScans">0</div></div>
+            <div class="stat-card"><div class="label">Portfolio Value</div><div class="value cyan" id="statPortfolio">—</div></div>
+            <div class="stat-card"><div class="label">Risk Exposure</div><div class="value" id="statExposure">0%</div></div>
+            <div class="stat-card"><div class="label">Max Loss</div><div class="value red" id="statMaxLoss">$0</div></div>
             <div class="stat-card"><div class="label">Today's P&amp;L</div><div class="value" id="statDailyPnl">$0.00</div></div>
             <div class="stat-card"><div class="label">Streak</div><div class="value" id="statStreak">—</div></div>
         </div>
@@ -211,6 +211,12 @@
                 <div class="panel-header"><span>Trade Signals</span><span class="last-scan" id="signalCount">0 signals</span></div>
                 <div class="panel-body" id="signalsBody">
                     <div class="empty-state"><div class="icon">&#128269;</div><p>Click "Scan Now" to find trade signals</p></div>
+                </div>
+            </div>
+            <div class="panel">
+                <div class="panel-header"><span>Live Activity Feed</span><span class="last-scan" id="activityCount">0 events</span></div>
+                <div class="panel-body" style="max-height:300px;">
+                    <div class="log-container" id="activityFeed"><div class="log-entry info">Waiting for bot activity...</div></div>
                 </div>
             </div>
             <div class="two-col">
@@ -404,6 +410,18 @@ async function refreshStats() {
         $('statOpen').textContent = stats.open_trades;
         $('statWinRate').textContent = stats.win_rate.toFixed(1) + '%';
         $('statTotal').textContent = stats.total_trades;
+        // Portfolio, exposure, max loss
+        if (stats.portfolio_value !== undefined) {
+            $('statPortfolio').textContent = usd(stats.portfolio_value);
+        }
+        if (stats.exposure_pct !== undefined) {
+            const expEl = $('statExposure');
+            expEl.textContent = stats.exposure_pct.toFixed(1) + '%';
+            expEl.className = 'value ' + (stats.exposure_pct > 50 ? 'red' : stats.exposure_pct > 30 ? 'yellow' : 'green');
+        }
+        if (stats.max_loss !== undefined) {
+            $('statMaxLoss').textContent = '-' + usd(stats.max_loss);
+        }
         if (stats.daily_pnl !== undefined) {
             $('statDailyPnl').textContent = (stats.daily_pnl >= 0 ? '+' : '') + usd(stats.daily_pnl);
             $('statDailyPnl').className = 'value ' + (stats.daily_pnl >= 0 ? 'green' : 'red');
@@ -437,7 +455,6 @@ async function refreshStatus() {
         dot.className = 'status-dot ' + (status.running ? 'running' : 'stopped');
         dot.title = status.running ? 'Bot is running' : 'Bot is stopped';
         updateModeUI(status.mode);
-        $('statScans').textContent = status.scan_count;
 
         if (status.running) {
             $('startBtn').style.display = 'none';
@@ -1382,6 +1399,34 @@ async function saveNote(tradeId) {
     }
 }
 
+// Live Activity Feed
+let _lastActivityTime = '';
+async function refreshActivity() {
+    try {
+        const url = _lastActivityTime ? `/api/activity?since=${encodeURIComponent(_lastActivityTime)}` : '/api/activity';
+        const entries = await api(url);
+        if (!entries.length) return;
+        const feed = $('activityFeed');
+        // Clear placeholder on first real data
+        if (feed.children.length === 1 && feed.children[0].textContent.includes('Waiting')) {
+            feed.innerHTML = '';
+        }
+        for (const e of entries) {
+            const div = document.createElement('div');
+            div.className = 'log-entry ' + (e.level || 'info');
+            const t = new Date(e.time).toLocaleTimeString();
+            const icon = e.level === 'success' ? '✅' : e.level === 'error' ? '❌' : e.level === 'warn' ? '⚠️' : '📋';
+            div.textContent = `[${t}] ${icon} ${e.msg}`;
+            feed.appendChild(div);
+        }
+        // Keep only last 100 entries in DOM
+        while (feed.children.length > 100) feed.removeChild(feed.firstChild);
+        feed.scrollTop = feed.scrollHeight;
+        _lastActivityTime = entries[entries.length - 1].time;
+        $('activityCount').textContent = feed.children.length + ' events';
+    } catch(e) {}
+}
+
 // Init
 (async () => {
     await refreshStatus();
@@ -1392,6 +1437,7 @@ async function saveNote(tradeId) {
     await loadEquityChart();
     await refreshDailyPnlChart();
     await refreshPerformance();
+    await refreshActivity();
 })();
 
 setInterval(async () => {
@@ -1401,7 +1447,11 @@ setInterval(async () => {
     await refreshCityStats();
     await refreshDailyPnlChart();
     await refreshPerformance();
+    await refreshActivity();
 }, 30000);
+
+// Activity feed refreshes faster (every 10s) for near-realtime feel
+setInterval(refreshActivity, 10000);
 
 // Independent 60s refresh for open positions live P&L
 // Runs separately so positions tab stays current even when bot isn't scanning

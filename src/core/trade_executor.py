@@ -498,6 +498,10 @@ def get_stats() -> dict:
 
     conn.close()
 
+    bankroll = get_current_bankroll()
+    portfolio_value = round(bankroll + open_cost, 2)
+    exposure_pct = round(open_cost / portfolio_value * 100, 1) if portfolio_value > 0 else 0
+
     return {
         "total_trades": total,
         "open_trades": open_trades,
@@ -505,10 +509,14 @@ def get_stats() -> dict:
         "wins": wins,
         "losses": settled - wins,
         "win_rate": (wins / settled * 100) if settled > 0 else 0,
-        "total_pnl": round(get_current_bankroll() + open_cost - settings.initial_bankroll, 2),
+        "total_pnl": round(bankroll + open_cost - settings.initial_bankroll, 2),
         "daily_pnl": round(get_daily_loss_today(), 2),
-        "bankroll": round(get_current_bankroll(), 2),
+        "bankroll": round(bankroll, 2),
         "streak": streak,
+        "portfolio_value": portfolio_value,
+        "open_cost": round(open_cost, 2),
+        "exposure_pct": exposure_pct,
+        "max_loss": round(open_cost, 2),
     }
 
 
