@@ -288,6 +288,21 @@ def bot_loop():
             print(f"[bot_loop] Scan found {len(markets)} markets")
             log_activity(f"Scan #{bot_state.get('scan_count', 0) + 1}: found {len(markets)} markets")
 
+            # Sync bankroll from Kalshi's actual cash balance — eliminates drift from fees,
+            # fill price differences, and rounding. Kalshi is the source of truth.
+            if settings.trading_mode == "live" and client:
+                try:
+                    bal_resp = client.get_balance()
+                    raw_bal = bal_resp.get("balance", bal_resp.get("portfolio_value", 0))
+                    kalshi_cash = float(raw_bal) / 100.0 if isinstance(raw_bal, int) and raw_bal > 1000 else float(raw_bal)
+                    current_bankroll = get_current_bankroll()
+                    drift = abs(kalshi_cash - current_bankroll)
+                    if drift > 0.50:  # Only sync if drift > 50¢ to avoid log spam
+                        log_bankroll(kalshi_cash, f"Auto-sync to Kalshi cash ${kalshi_cash:.2f} (drift was ${drift:.2f})")
+                        print(f"[bot_loop] Bankroll synced: ${current_bankroll:.2f} → ${kalshi_cash:.2f} (drift ${drift:.2f})")
+                except Exception as e:
+                    print(f"[bot_loop] Balance sync failed: {e}")
+
             bankroll = get_current_bankroll()
             signals = []
             scan_fetched_at = datetime.now(timezone.utc).isoformat()
