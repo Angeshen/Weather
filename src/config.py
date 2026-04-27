@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     max_trade_size: float = Field(default=75.0, alias="MAX_TRADE_SIZE")
     daily_loss_limit: float = Field(default=250.0, alias="DAILY_LOSS_LIMIT")
     max_concurrent_trades: int = Field(default=8, alias="MAX_CONCURRENT_TRADES")
-    min_edge_threshold: float = Field(default=0.08, alias="MIN_EDGE_THRESHOLD")
+    min_edge_threshold: float = Field(default=0.05, alias="MIN_EDGE_THRESHOLD")
     kelly_fraction: float = Field(default=0.15, alias="KELLY_FRACTION")
 
     # Scanning

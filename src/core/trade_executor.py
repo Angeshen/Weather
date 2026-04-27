@@ -788,23 +788,27 @@ def exit_losing_positions(current_markets: list, client=None) -> list[dict]:
             except Exception:
                 pass
 
-        # Profit target exit: scalp gains early instead of holding to expiry.
-        # Requirements for a valid profit exit:
-        #   1. Bid is 25%+ above entry (accounts for spread slippage)
-        #   2. At least 2¢/contract profit (covers Kalshi's implicit spread cost)
+        # Profit target exit: sell early only if it's clearly better than holding.
+        # Key insight: selling triggers a ~1-2¢/contract fee. Holding to settlement = no sell fee.
+        # So only scalp if:
+        #   1. Bid is 40%+ above entry (big enough gain to justify the sell fee)
+        #   2. At least 5¢/contract profit (covers Kalshi buy+sell fees ~3-4¢)
         #   3. Exit spread is reasonable (≤8¢) so we're selling into real demand
         #   4. Trade is at least 5 min old (avoid bid/ask bounce churn)
+        #   5. Bid is at or above 93¢ (near-certain win — lock it in rather than risk reversal)
+        #      OR gain is 40%+ of max payout (worth paying the fee to de-risk)
         max_payout_per_contract = 1.0 - entry_price  # net profit per contract if it settles
-        profit_target = entry_price * 1.25  # 25% gain on entry price
-        min_profit_per_contract = 0.02  # at least 2¢ per contract profit
+        profit_target = entry_price * 1.40  # 40% gain on entry price (was 25%)
+        min_profit_per_contract = 0.05  # at least 5¢ per contract profit (was 2¢)
         # Check exit spread — only sell if there's real demand (tight spread)
         if side == "yes":
             exit_ask = market.get("yes_ask") or 0
         else:
             exit_ask = market.get("no_ask") or 0
         exit_spread = (exit_ask - current_bid) if exit_ask and current_bid else 99
-        if (current_bid >= profit_target
-                and current_bid - entry_price >= min_profit_per_contract
+        near_certain = current_bid >= 0.93  # Lock in near-certain wins — remaining 7¢ not worth the risk
+        if (((current_bid >= profit_target and current_bid - entry_price >= min_profit_per_contract)
+                or near_certain)
                 and exit_spread <= 0.08
                 and age_seconds > 300):
             realized_pnl = round(current_value - cost, 2)
