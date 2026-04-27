@@ -279,22 +279,22 @@ def evaluate_market(market: dict, forecast: dict, bankroll: float) -> dict | Non
     yes_bid = market.get("yes_bid")
     no_bid = market.get("no_bid")
 
-    # Spread-aware pricing: when spread is wide (>4¢), use midpoint instead
-    # of ask for our limit order. Gets better fills and preserves more edge.
-    # No fill-improvement bump — every penny overpaid x 80+ contracts = real money.
-    # Better to occasionally miss a fill than systematically overpay on every trade.
+    # Fee-optimized pricing: use bid+1¢ limit orders to let the market come to us.
+    # Instead of crossing the spread (paying the ask), we sit just above the best bid.
+    # This saves 1-3¢ per contract vs paying the ask — on 80 contracts that's $0.80-$2.40.
+    # Trade-off: may get fewer fills, but each fill is cheaper = more profit after fees.
     def _smart_price(ask, bid):
         if not ask or ask <= 0:
             return None
         if not bid or bid <= 0:
-            return min(ask, 0.95)
+            return min(ask, 0.95)  # No bid — fall back to ask
         spread_cents = int(ask * 100) - int(bid * 100)
-        if spread_cents > 4:
-            # Wide spread — use midpoint. Saves ~2-4¢ per contract vs paying the ask.
-            mid = (ask + bid) / 2
-            return min(round(mid * 100 + 0.5) / 100, 0.95)  # ceil to nearest cent
+        if spread_cents <= 2:
+            return min(ask, 0.95)  # Spread is 1-2¢, just take the ask
         else:
-            return min(ask, 0.95)  # Tight spread — just take the ask
+            # Sit at bid+1¢ — we're the best offer without crossing the spread
+            entry = round(bid + 0.01, 2)
+            return min(entry, 0.95)
 
     yes_entry = _smart_price(yes_ask, yes_bid)
     no_entry = _smart_price(no_ask, no_bid)
@@ -374,6 +374,12 @@ def evaluate_market(market: dict, forecast: dict, bankroll: float) -> dict | Non
 
         # Recalculate actual position size based on capped contracts
         actual_size = round(contracts * price, 2)
+
+        # Minimum position size — tiny trades ($5-10) have the same flat fee
+        # as big ones but barely any profit potential. Skip if not worth the fee.
+        if actual_size < 15.0:
+            print(f"[filter] {ticker}/{side}: REJECTED — position ${actual_size:.2f} too small (min $15)")
+            return None
 
         # Re-check liquidity with the actual contract count
         if not _is_liquid(market, required_contracts=contracts):
