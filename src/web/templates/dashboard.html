@@ -176,6 +176,13 @@
             <div class="stat-card"><div class="label">Today's P&amp;L</div><div class="value" id="statDailyPnl">$0.00</div></div>
             <div class="stat-card"><div class="label">Unrealized</div><div class="value" id="statUnrealized">$0.00</div></div>
             <div class="stat-card"><div class="label">Streak</div><div class="value" id="statStreak">—</div></div>
+            <div class="stat-card"><div class="label">ROI</div><div class="value" id="statRoi">0%</div></div>
+            <div class="stat-card"><div class="label">Avg Win</div><div class="value green" id="statAvgWin">—</div></div>
+            <div class="stat-card"><div class="label">Avg Loss</div><div class="value red" id="statAvgLoss">—</div></div>
+            <div class="stat-card"><div class="label">Best Trade</div><div class="value green" id="statBestTrade">—</div></div>
+            <div class="stat-card"><div class="label">Worst Trade</div><div class="value red" id="statWorstTrade">—</div></div>
+            <div class="stat-card"><div class="label">Profit Factor</div><div class="value" id="statProfitFactor">—</div></div>
+            <div class="stat-card"><div class="label">Avg Hold</div><div class="value" id="statAvgHold">—</div></div>
         </div>
     </div>
 
@@ -451,6 +458,25 @@ async function refreshStats() {
             if (s > 0) { streakEl.textContent = `🔥${s}W`; streakEl.className = 'value green'; }
             else if (s < 0) { streakEl.textContent = `❄️${Math.abs(s)}L`; streakEl.className = 'value red'; }
             else { streakEl.textContent = '—'; streakEl.className = 'value'; }
+        }
+        // New stat cards
+        if (stats.roi_pct !== undefined) {
+            const roiEl = $('statRoi');
+            roiEl.textContent = (stats.roi_pct >= 0 ? '+' : '') + stats.roi_pct.toFixed(1) + '%';
+            roiEl.className = 'value ' + (stats.roi_pct >= 0 ? 'green' : 'red');
+        }
+        if (stats.avg_win !== undefined) $('statAvgWin').textContent = '+' + usd(stats.avg_win);
+        if (stats.avg_loss !== undefined) $('statAvgLoss').textContent = usd(stats.avg_loss);
+        if (stats.best_trade !== undefined) $('statBestTrade').textContent = '+' + usd(stats.best_trade);
+        if (stats.worst_trade !== undefined) $('statWorstTrade').textContent = usd(stats.worst_trade);
+        if (stats.profit_factor !== undefined) {
+            const pfEl = $('statProfitFactor');
+            pfEl.textContent = stats.profit_factor >= 999 ? '∞' : stats.profit_factor.toFixed(2) + 'x';
+            pfEl.className = 'value ' + (stats.profit_factor >= 1.5 ? 'green' : stats.profit_factor >= 1 ? 'yellow' : 'red');
+        }
+        if (stats.avg_hold_hours !== undefined) {
+            const h = stats.avg_hold_hours;
+            $('statAvgHold').textContent = h >= 24 ? `${(h/24).toFixed(1)}d` : `${h.toFixed(1)}h`;
         }
         // Update Positions tab badge with open count
         const posBtn = $('tabPositionsBtn');

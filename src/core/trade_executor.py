@@ -509,11 +509,34 @@ def get_stats() -> dict:
             else:
                 break
 
+    # Extra stats
+    avg_win_row = conn.execute("SELECT AVG(pnl_usd) FROM trades WHERE status='settled' AND pnl_usd > 0").fetchone()
+    avg_loss_row = conn.execute("SELECT AVG(pnl_usd) FROM trades WHERE status='settled' AND pnl_usd <= 0").fetchone()
+    best_row = conn.execute("SELECT MAX(pnl_usd) FROM trades WHERE status='settled'").fetchone()
+    worst_row = conn.execute("SELECT MIN(pnl_usd) FROM trades WHERE status='settled'").fetchone()
+    total_won_row = conn.execute("SELECT COALESCE(SUM(pnl_usd), 0) FROM trades WHERE status='settled' AND pnl_usd > 0").fetchone()
+    total_lost_row = conn.execute("SELECT COALESCE(SUM(pnl_usd), 0) FROM trades WHERE status='settled' AND pnl_usd <= 0").fetchone()
+    # Avg hold time (hours) for settled trades
+    avg_hold_row = conn.execute("""
+        SELECT AVG((julianday(settled_at) - julianday(timestamp)) * 24)
+        FROM trades WHERE status='settled' AND settled_at IS NOT NULL AND timestamp IS NOT NULL
+    """).fetchone()
+
     conn.close()
+
+    avg_win = round(avg_win_row[0], 2) if avg_win_row and avg_win_row[0] else 0
+    avg_loss = round(avg_loss_row[0], 2) if avg_loss_row and avg_loss_row[0] else 0
+    best_trade = round(best_row[0], 2) if best_row and best_row[0] else 0
+    worst_trade = round(worst_row[0], 2) if worst_row and worst_row[0] else 0
+    total_won = total_won_row[0] if total_won_row else 0
+    total_lost = abs(total_lost_row[0]) if total_lost_row else 0
+    profit_factor = round(total_won / total_lost, 2) if total_lost > 0 else 999
+    avg_hold_hours = round(avg_hold_row[0], 1) if avg_hold_row and avg_hold_row[0] else 0
 
     bankroll = get_current_bankroll()
     portfolio_value = round(bankroll + open_cost, 2)
     exposure_pct = round(open_cost / portfolio_value * 100, 1) if portfolio_value > 0 else 0
+    roi_pct = round((portfolio_value - settings.initial_bankroll) / settings.initial_bankroll * 100, 1) if settings.initial_bankroll > 0 else 0
 
     return {
         "total_trades": total,
@@ -530,6 +553,13 @@ def get_stats() -> dict:
         "open_cost": round(open_cost, 2),
         "exposure_pct": exposure_pct,
         "max_loss": round(open_cost, 2),
+        "avg_win": avg_win,
+        "avg_loss": avg_loss,
+        "best_trade": best_trade,
+        "worst_trade": worst_trade,
+        "profit_factor": profit_factor,
+        "roi_pct": roi_pct,
+        "avg_hold_hours": avg_hold_hours,
     }
 
 
