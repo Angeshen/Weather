@@ -174,6 +174,7 @@
             <div class="stat-card"><div class="label">Risk Exposure</div><div class="value" id="statExposure">0%</div></div>
             <div class="stat-card"><div class="label">Max Loss</div><div class="value red" id="statMaxLoss">$0</div></div>
             <div class="stat-card"><div class="label">Today's P&amp;L</div><div class="value" id="statDailyPnl">$0.00</div></div>
+            <div class="stat-card"><div class="label">Unrealized</div><div class="value" id="statUnrealized">$0.00</div></div>
             <div class="stat-card"><div class="label">Streak</div><div class="value" id="statStreak">—</div></div>
         </div>
     </div>
@@ -602,6 +603,12 @@ async function refreshOpenPositions(openTrades) {
         <span class="${totalClass}" style="font-weight:700;font-size:15px">${totalUnrealized >= 0 ? '+' : ''}${usd(totalUnrealized)}</span>
     </div>`;
     body.innerHTML = html;
+    // Update top-bar Unrealized card
+    const unrealEl = $('statUnrealized');
+    if (unrealEl) {
+        unrealEl.textContent = (totalUnrealized >= 0 ? '+' : '') + usd(totalUnrealized);
+        unrealEl.className = 'value ' + (totalUnrealized >= 0 ? 'green' : 'red');
+    }
 }
 
 async function refreshTrades() {
