@@ -164,16 +164,17 @@
     <!-- Stats bar always visible -->
     <div style="background:var(--surface);border-bottom:1px solid var(--border);padding:12px 24px;">
         <div class="stats-grid">
-            <div class="stat-card"><div class="label">Bankroll</div><div class="value cyan" id="statBankroll">$5,000</div></div>
             <div class="stat-card"><div class="label">Kalshi Balance</div><div class="value cyan" id="statKalshiBalance">—</div></div>
             <div class="stat-card"><div class="label">Total P&amp;L</div><div class="value" id="statPnl">$0.00</div></div>
             <div class="stat-card"><div class="label">Open Trades</div><div class="value" id="statOpen">0</div></div>
             <div class="stat-card"><div class="label">Win Rate</div><div class="value" id="statWinRate">0%</div></div>
-            <div class="stat-card"><div class="label">Total Trades</div><div class="value" id="statTotal">0</div></div>
             <div class="stat-card"><div class="label">Portfolio Value</div><div class="value cyan" id="statPortfolio">—</div></div>
             <div class="stat-card"><div class="label">Risk Exposure</div><div class="value" id="statExposure">0%</div></div>
-            <div class="stat-card"><div class="label">Max Loss</div><div class="value red" id="statMaxLoss">$0</div></div>
             <div class="stat-card"><div class="label">Today's P&amp;L</div><div class="value" id="statDailyPnl">$0.00</div></div>
+            <!-- hidden: statBankroll, statTotal, statMaxLoss (kept for code compat) -->
+            <span style="display:none" id="statBankroll"></span>
+            <span style="display:none" id="statTotal"></span>
+            <span style="display:none" id="statMaxLoss"></span>
             <div class="stat-card"><div class="label">Unrealized</div><div class="value" id="statUnrealized">$0.00</div></div>
             <div class="stat-card"><div class="label">Streak</div><div class="value" id="statStreak">—</div></div>
             <div class="stat-card"><div class="label">ROI</div><div class="value" id="statRoi">0%</div></div>
