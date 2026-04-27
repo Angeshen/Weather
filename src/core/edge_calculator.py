@@ -281,28 +281,20 @@ def evaluate_market(market: dict, forecast: dict, bankroll: float) -> dict | Non
 
     # Spread-aware pricing: when spread is wide (>4¢), use midpoint instead
     # of ask for our limit order. Gets better fills and preserves more edge.
-    # Then add a small fill-improvement bump (1-2¢) to jump the order queue.
+    # No fill-improvement bump — every penny overpaid x 80+ contracts = real money.
+    # Better to occasionally miss a fill than systematically overpay on every trade.
     def _smart_price(ask, bid):
         if not ask or ask <= 0:
             return None
         if not bid or bid <= 0:
-            base = ask
+            return min(ask, 0.95)
+        spread_cents = int(ask * 100) - int(bid * 100)
+        if spread_cents > 4:
+            # Wide spread — use midpoint. Saves ~2-4¢ per contract vs paying the ask.
+            mid = (ask + bid) / 2
+            return min(round(mid * 100 + 0.5) / 100, 0.95)  # ceil to nearest cent
         else:
-            spread_cents = int(ask * 100) - int(bid * 100)
-            if spread_cents > 4:
-                # Use midpoint rounded up to nearest cent (we're buying)
-                mid = (ask + bid) / 2
-                base = round(mid * 100 + 0.5) / 100  # ceil to nearest cent
-            else:
-                base = ask  # Tight spread — just take the ask
-
-        # Fill improvement: bump price 1-2¢ above base to jump the queue.
-        # On a winning trade, paying 82¢ vs 80¢ costs $0.26 on 13 contracts
-        # but getting filled on all 13 vs 5 earns $1.44 more. Easy math.
-        bump = 0.02 if base >= 0.50 else 0.01
-        improved = base + bump
-        # Never exceed 95¢ — diminishing returns above that
-        return min(improved, 0.95)
+            return min(ask, 0.95)  # Tight spread — just take the ask
 
     yes_entry = _smart_price(yes_ask, yes_bid)
     no_entry = _smart_price(no_ask, no_bid)
