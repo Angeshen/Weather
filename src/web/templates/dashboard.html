@@ -550,7 +550,7 @@ async function refreshOpenPositions(openTrades) {
             }
         }
         // Win target = profit if settles in our favor
-        const ct = t.filled_contracts || t.contracts;
+        const ct = t.filled_contracts ?? t.contracts;
         const target = (ct && t.position_size_usd)
             ? `<span class="pnl-pos">+${usd(ct - t.position_size_usd)}</span>`
             : '—';
@@ -625,7 +625,7 @@ async function refreshTrades() {
             const unrealStr = unreal != null ? `<span class="${unreal >= 0 ? 'pnl-pos' : 'pnl-neg'}">${unreal >= 0 ? '+' : ''}${usd(unreal)}</span>` : '—';
             // Win Profit = what you make if contract resolves in your favor at expiry
             // Colored red if position is currently moving against you (unrealized negative)
-            const ctPerf = t.filled_contracts || t.contracts;
+            const ctPerf = t.filled_contracts ?? t.contracts;
             const winProfitVal = (t.status === 'open' && ctPerf && t.position_size_usd)
                 ? ctPerf * 1.0 - t.position_size_usd
                 : null;

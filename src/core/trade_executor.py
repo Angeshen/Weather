@@ -178,7 +178,11 @@ def get_open_trade_count() -> int:
 
 def is_ticker_already_open(ticker: str) -> tuple[bool, str]:
     """Return (True, reason) if ticker is blocked, (False, '') if clear.
-    Blocks if: open trade exists in current mode, or early-exited within the last hour."""
+    Blocks if:
+    - open trade exists on this ticker
+    - ANY trade (win or loss) was placed on this ticker within the last 2 hours
+      (prevents repeated entries on the same market, e.g. CHI-T61 x6)
+    """
     conn = get_db()
     mode = settings.trading_mode
     # Check open trades — scoped to current mode so paper/live don't block each other
@@ -188,23 +192,23 @@ def is_ticker_already_open(ticker: str) -> tuple[bool, str]:
     if (row[0] if row else 0) > 0:
         conn.close()
         return True, "open"
-    # Check if early-exited (settled with loss) within the last 60 minutes — scoped to mode
-    one_hour_ago = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    # Block re-entry if ANY trade was placed on this ticker within the last 2 hours
+    two_hours_ago = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
     row = conn.execute(
-        "SELECT id, settled_at FROM trades WHERE ticker = ? AND mode = ? AND status = 'settled' "
-        "AND pnl_usd < 0 AND settled_at > ? ORDER BY id DESC LIMIT 1",
-        (ticker, mode, one_hour_ago)
+        "SELECT id, timestamp FROM trades WHERE ticker = ? AND mode = ? "
+        "AND timestamp > ? ORDER BY id DESC LIMIT 1",
+        (ticker, mode, two_hours_ago)
     ).fetchone()
     conn.close()
     if row:
         try:
-            settled_at = datetime.fromisoformat(row[1])
-            if settled_at.tzinfo is None:
-                settled_at = settled_at.replace(tzinfo=timezone.utc)
-            elapsed = (datetime.now(timezone.utc) - settled_at).total_seconds()
-            remaining_min = max(0, (3600 - elapsed) / 60)
+            placed_at = datetime.fromisoformat(row[1])
+            if placed_at.tzinfo is None:
+                placed_at = placed_at.replace(tzinfo=timezone.utc)
+            elapsed = (datetime.now(timezone.utc) - placed_at).total_seconds()
+            remaining_min = max(0, (7200 - elapsed) / 60)
         except Exception:
-            remaining_min = 60
+            remaining_min = 120
         return True, f"cooldown:{remaining_min:.0f}"
     return False, ""
 
@@ -728,7 +732,8 @@ def exit_losing_positions(current_markets: list, client=None) -> list[dict]:
             continue
 
         entry_price = trade.get("market_price", 0)
-        contracts = trade.get("filled_contracts") or trade.get("contracts", 0)
+        fc = trade.get("filled_contracts")
+        contracts = fc if fc is not None else trade.get("contracts", 0)
         cost = trade.get("position_size_usd", 0)
         side = trade.get("side", "yes")
 
@@ -1057,7 +1062,8 @@ def get_open_trades_with_current_prices(last_markets: list, client=None) -> list
             current_price = current.get("no_bid") or current.get("no_ask")
 
         entry_price = trade.get("market_price", 0)
-        contracts = trade.get("filled_contracts") or trade.get("contracts", 0)
+        fc = trade.get("filled_contracts")
+        contracts = fc if fc is not None else trade.get("contracts", 0)
 
         if current_price and entry_price and contracts:
             unrealized_pnl = round((current_price - entry_price) * contracts, 2)
