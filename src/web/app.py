@@ -577,18 +577,51 @@ def api_stats():
 
 @app.route("/api/daily-pnl")
 def api_daily_pnl():
-    """Return daily P&L history for bar chart (last 30 days)."""
+    """Return daily P&L history derived from bankroll_log (Kalshi-synced).
+    For each day: P&L = last bankroll entry - first bankroll entry.
+    Trade counts still come from daily_pnl table (those are accurate).
+    """
     from src.core.trade_executor import get_db
     conn = get_db()
-    rows = conn.execute(
-        "SELECT date, total_pnl, trades_count, wins, losses "
-        "FROM daily_pnl ORDER BY date DESC LIMIT 30"
+    # Get daily bankroll deltas from bankroll_log
+    bankroll_rows = conn.execute("""
+        SELECT DATE(timestamp) as day,
+               MIN(CASE WHEN rn = 1 THEN bankroll END) as first_bankroll,
+               MAX(CASE WHEN rn_desc = 1 THEN bankroll END) as last_bankroll
+        FROM (
+            SELECT timestamp, bankroll,
+                   ROW_NUMBER() OVER (PARTITION BY DATE(timestamp) ORDER BY id ASC) as rn,
+                   ROW_NUMBER() OVER (PARTITION BY DATE(timestamp) ORDER BY id DESC) as rn_desc
+            FROM bankroll_log
+        )
+        GROUP BY day
+        ORDER BY day DESC LIMIT 60
+    """).fetchall()
+    # Build lookup: date -> (first_bankroll, last_bankroll)
+    bankroll_by_day = {}
+    for r in bankroll_rows:
+        if r[1] is not None and r[2] is not None:
+            bankroll_by_day[r[0]] = (r[1], r[2])
+
+    # Get trade counts from daily_pnl table
+    count_rows = conn.execute(
+        "SELECT date, trades_count, wins, losses FROM daily_pnl ORDER BY date DESC LIMIT 60"
     ).fetchall()
     conn.close()
-    return jsonify([
-        {"date": r[0], "total_pnl": round(r[1], 2), "trades": r[2], "wins": r[3], "losses": r[4]}
-        for r in reversed(rows)
-    ])
+    counts_by_day = {r[0]: (r[1], r[2], r[3]) for r in count_rows}
+
+    # Merge: prefer bankroll-derived P&L, use daily_pnl counts
+    all_dates = sorted(set(list(bankroll_by_day.keys()) + list(counts_by_day.keys())))[-30:]
+    result = []
+    for d in all_dates:
+        if d in bankroll_by_day:
+            first_b, last_b = bankroll_by_day[d]
+            pnl = round(last_b - first_b, 2)
+        else:
+            pnl = 0.0
+        trades, wins, losses = counts_by_day.get(d, (0, 0, 0))
+        result.append({"date": d, "total_pnl": pnl, "trades": trades, "wins": wins, "losses": losses})
+    return jsonify(result)
 
 
 @app.route("/api/trades")
