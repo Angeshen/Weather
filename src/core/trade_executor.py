@@ -156,14 +156,39 @@ def _update_daily_pnl(pnl: float, won: bool, trade_date: str = None):
 
 
 def get_daily_loss_today() -> float:
-    """Get total P&L for today (negative = losses)."""
+    """Get today's realized P&L from Kalshi-synced bankroll.
+    Formula: (current_portfolio) - (start_of_day_portfolio)
+    Where portfolio = cash (bankroll) + open position costs.
+    Bankroll is auto-synced from Kalshi's actual cash, so this is accurate.
+    """
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     conn = get_db()
-    row = conn.execute(
-        "SELECT total_pnl FROM daily_pnl WHERE date = ?", (today,)
+    # First bankroll entry today = Kalshi cash at start of day
+    row_start = conn.execute(
+        "SELECT bankroll FROM bankroll_log WHERE timestamp >= ? ORDER BY id ASC LIMIT 1",
+        (today,)
     ).fetchone()
+    # Current bankroll = latest Kalshi cash
+    row_now = conn.execute(
+        "SELECT bankroll FROM bankroll_log ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    # Current open position cost
+    current_open_cost = conn.execute(
+        "SELECT COALESCE(SUM(position_size_usd), 0) FROM trades WHERE status = 'open'"
+    ).fetchone()[0]
+    # Open position cost at start of day = trades that were opened BEFORE today and are still open
+    # plus trades opened before today that settled today (they were open at start of day)
+    start_open_cost = conn.execute(
+        "SELECT COALESCE(SUM(position_size_usd), 0) FROM trades "
+        "WHERE timestamp < ? AND (status = 'open' OR (status = 'settled' AND settled_at >= ?))",
+        (today, today)
+    ).fetchone()[0]
     conn.close()
-    return row[0] if row else 0.0
+    if row_start and row_now:
+        start_portfolio = row_start[0] + start_open_cost
+        now_portfolio = row_now[0] + current_open_cost
+        return round(now_portfolio - start_portfolio, 2)
+    return 0.0
 
 
 def get_open_trade_count() -> int:
