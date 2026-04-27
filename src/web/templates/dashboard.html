@@ -273,6 +273,23 @@
 
         <!-- TAB: Performance -->
         <div class="tab-content" id="tab-performance">
+            <!-- P&L Calendar -->
+            <div class="panel">
+                <div class="panel-header">
+                    <span>P&amp;L Calendar</span>
+                    <div style="display:flex;gap:8px;align-items:center;">
+                        <button class="btn btn-outline" onclick="calendarMonth(-1)" style="padding:2px 8px;font-size:11px;">◀</button>
+                        <span id="calendarTitle" style="font-size:12px;font-weight:600;min-width:100px;text-align:center;"></span>
+                        <button class="btn btn-outline" onclick="calendarMonth(1)" style="padding:2px 8px;font-size:11px;">▶</button>
+                    </div>
+                </div>
+                <div class="panel-body" style="max-height:none;overflow:visible;">
+                    <div id="pnlCalendar" style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;"></div>
+                    <div style="display:flex;justify-content:center;gap:16px;margin-top:10px;font-size:11px;color:var(--text-dim);">
+                        <span>🟢 Profit</span><span>🔴 Loss</span><span>⚫ No trades</span>
+                    </div>
+                </div>
+            </div>
             <!-- Summary cards -->
             <div class="stats-grid" id="perfSummary" style="margin-bottom:16px;">
                 <div class="stat-card"><div class="label">Avg Forecast Error</div><div class="value cyan" id="perfAvgError">—</div></div>
@@ -606,7 +623,7 @@ async function refreshTrades() {
             $('tradesBody').innerHTML = '<div class="empty-state"><div class="icon">&#128202;</div><p>No trades yet</p></div>';
             return;
         }
-        let html = '<table><thead><tr><th>#</th><th>Time</th><th>Ticker</th><th>Mode</th><th>Side</th><th>Edge</th><th>Size</th><th>Status</th><th>Duration</th><th>P&L</th><th>Unrealized</th><th>Forecast</th><th>Actual</th><th>Win Profit</th></tr></thead><tbody>';
+        let html = '<table><thead><tr><th>#</th><th>Time</th><th>Ticker</th><th>Mode</th><th>Side</th><th>Edge</th><th>Size</th><th>Order</th><th>Status</th><th>Duration</th><th>P&L</th><th>Unrealized</th><th>Forecast</th><th>Actual</th><th>Win Profit</th></tr></thead><tbody>';
         for (const t of trades) {
             const pnlClass = (t.pnl_usd || 0) > 0 ? 'pnl-pos' : (t.pnl_usd || 0) < 0 ? 'pnl-neg' : '';
             const pnl = t.pnl_usd != null && t.status === 'settled' ? usd(t.pnl_usd) : '—';
@@ -643,6 +660,7 @@ async function refreshTrades() {
                 <td class="${(t.direction||'').includes('ABOVE') || (t.direction||'').includes('YES') ? 'dir-above' : 'dir-below'}">${(t.side||'').toUpperCase()}</td>
                 <td>${t.edge ? pct(t.edge) : '?'}</td>
                 <td>${t.position_size_usd ? usd(t.position_size_usd) : '?'}</td>
+                <td style="font-size:11px">${t.price_cents ? ('Limit ' + t.price_cents + '¢') : '?'}</td>
                 <td>${t.status}</td>
                 <td style="color:var(--text-dim);font-size:11px">${durationStr}</td>
                 <td class="${pnlClass}">${pnl}</td>
@@ -1270,6 +1288,83 @@ async function runBacktest() {
     btn.textContent = 'Run Backtest';
 }
 
+// P&L Calendar
+let _calendarData = [];
+let _calendarDate = new Date();
+function calendarMonth(delta) {
+    _calendarDate.setMonth(_calendarDate.getMonth() + delta);
+    renderCalendar();
+}
+async function loadCalendarData() {
+    try {
+        _calendarData = await api('/api/daily-pnl');
+    } catch(e) {}
+    renderCalendar();
+}
+function renderCalendar() {
+    const year = _calendarDate.getFullYear();
+    const month = _calendarDate.getMonth();
+    const months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    $('calendarTitle').textContent = `${months[month]} ${year}`;
+
+    // Build lookup: date string -> pnl data
+    const lookup = {};
+    for (const d of _calendarData) {
+        lookup[d.date] = d;
+    }
+
+    const firstDay = new Date(year, month, 1).getDay(); // 0=Sun
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const today = new Date().toISOString().slice(0, 10);
+
+    let html = '';
+    // Day headers
+    for (const d of ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']) {
+        html += `<div style="text-align:center;font-size:10px;font-weight:600;color:var(--text-dim);padding:4px 0;">${d}</div>`;
+    }
+    // Empty cells before first day
+    for (let i = 0; i < firstDay; i++) {
+        html += '<div></div>';
+    }
+    // Day cells
+    let monthPnl = 0;
+    let monthTrades = 0;
+    for (let day = 1; day <= daysInMonth; day++) {
+        const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+        const d = lookup[dateStr];
+        const isToday = dateStr === today;
+        let bg = 'var(--surface2)';
+        let text = '';
+        let sub = '';
+        if (d) {
+            const pnl = d.total_pnl || 0;
+            monthPnl += pnl;
+            monthTrades += d.trades || 0;
+            if (pnl > 0) {
+                const intensity = Math.min(pnl / 50, 1);
+                bg = `rgba(0, 214, 143, ${0.15 + intensity * 0.45})`;
+            } else if (pnl < 0) {
+                const intensity = Math.min(Math.abs(pnl) / 50, 1);
+                bg = `rgba(255, 107, 107, ${0.15 + intensity * 0.45})`;
+            }
+            text = `${pnl >= 0 ? '+' : ''}$${pnl.toFixed(0)}`;
+            sub = `${d.wins || 0}W ${d.losses || 0}L`;
+        }
+        const border = isToday ? 'border:2px solid var(--cyan);' : '';
+        html += `<div style="background:${bg};border-radius:6px;padding:4px;text-align:center;min-height:52px;${border}">
+            <div style="font-size:11px;font-weight:600;color:${isToday ? 'var(--cyan)' : 'var(--text-dim)'}">${day}</div>
+            <div style="font-size:12px;font-weight:700;${d && d.total_pnl >= 0 ? 'color:var(--green)' : d ? 'color:var(--red)' : ''}">${text}</div>
+            <div style="font-size:9px;color:var(--text-dim)">${sub}</div>
+        </div>`;
+    }
+    $('pnlCalendar').innerHTML = html;
+
+    // Update title with month total
+    const sign = monthPnl >= 0 ? '+' : '';
+    const color = monthPnl >= 0 ? 'var(--green)' : 'var(--red)';
+    $('calendarTitle').innerHTML = `${months[month]} ${year} <span style="color:${color};margin-left:8px;font-size:11px">${sign}$${monthPnl.toFixed(2)} (${monthTrades} trades)</span>`;
+}
+
 // Performance tab
 let _perfPnlChart = null, _perfEdgeChart = null;
 async function refreshPerformance() {
@@ -1437,6 +1532,7 @@ async function refreshActivity() {
     await loadEquityChart();
     await refreshDailyPnlChart();
     await refreshPerformance();
+    await loadCalendarData();
     await refreshActivity();
 })();
 
@@ -1447,6 +1543,7 @@ setInterval(async () => {
     await refreshCityStats();
     await refreshDailyPnlChart();
     await refreshPerformance();
+    await loadCalendarData();
     await refreshActivity();
 }, 30000);
 
