@@ -558,17 +558,18 @@ def get_stats() -> dict:
 
 
 def _exit_loss_threshold(model_prob: float = 0.0):
-    """Confidence-tiered stop-loss.
-    ≥80% model prob: 50% stop — wide leash but still protected from total loss.
-    60-80%: 40% stop — room for swings but not unlimited risk.
-    <60%: use dashboard setting (default 25%) — tight stop for risky scalps.
+    """Confidence-tiered stop-loss — capped at 35% max.
+    Avg loss was 2.6x avg win at 50% leash. Tightening to make losses smaller.
+    ≥80% model prob: 35% stop (was 50%)
+    60-80%: 30% stop (was 40%)
+    <60%: 25% stop (dashboard setting, default 25%)
     """
     if model_prob >= 0.80:
-        return 0.50  # Wide leash but never hold to total loss
+        return 0.35
     elif model_prob >= 0.60:
-        return 0.40
+        return 0.30
     else:
-        return settings.exit_loss_threshold
+        return min(settings.exit_loss_threshold, 0.25)
 
 
 def reconcile_resting_orders(client) -> list[dict]:
@@ -821,27 +822,19 @@ def exit_losing_positions(current_markets: list, client=None) -> list[dict]:
             except Exception:
                 pass
 
-        # Profit target exit: sell early only if it's clearly better than holding.
+        # Profit target exit: ONLY exit early if bid is near-certain (>=95c).
         # Key insight: selling triggers a ~1-2¢/contract fee. Holding to settlement = no sell fee.
-        # So only scalp if:
-        #   1. Bid is 40%+ above entry (big enough gain to justify the sell fee)
-        #   2. At least 5¢/contract profit (covers Kalshi buy+sell fees ~3-4¢)
-        #   3. Exit spread is reasonable (≤8¢) so we're selling into real demand
-        #   4. Trade is at least 5 min old (avoid bid/ask bounce churn)
-        #   5. Bid is at or above 93¢ (near-certain win — lock it in rather than risk reversal)
-        #      OR gain is 40%+ of max payout (worth paying the fee to de-risk)
-        max_payout_per_contract = 1.0 - entry_price  # net profit per contract if it settles
-        profit_target = entry_price * 1.40  # 40% gain on entry price (was 25%)
-        min_profit_per_contract = 0.05  # at least 5¢ per contract profit (was 2¢)
+        # With 80% win rate and avg loss > avg win, the math favors holding ALL winners
+        # to settlement. Only sell when there's almost no upside left (95¢+).
+        max_payout_per_contract = 1.0 - entry_price
         # Check exit spread — only sell if there's real demand (tight spread)
         if side == "yes":
             exit_ask = market.get("yes_ask") or 0
         else:
             exit_ask = market.get("no_ask") or 0
         exit_spread = (exit_ask - current_bid) if exit_ask and current_bid else 99
-        near_certain = current_bid >= 0.93  # Lock in near-certain wins — remaining 7¢ not worth the risk
-        if (((current_bid >= profit_target and current_bid - entry_price >= min_profit_per_contract)
-                or near_certain)
+        near_certain = current_bid >= 0.95  # Only lock in near-100% certainties
+        if (near_certain
                 and exit_spread <= 0.08
                 and age_seconds > 300):
             realized_pnl = round(current_value - cost, 2)
