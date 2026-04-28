@@ -765,7 +765,7 @@ async function refreshCityStats() {
 
 function renderSignals(signals) {
     $('signalCount').textContent = signals.length + ' signals';
-    $('statSignals').textContent = signals.length;
+    const sigEl = $('statSignals'); if (sigEl) sigEl.textContent = signals.length;
     if (!signals.length) {
         $('signalsBody').innerHTML = '<div class="empty-state"><div class="icon">&#9989;</div><p>No actionable signals — market prices align with forecasts</p></div>';
         return;
@@ -814,7 +814,7 @@ function renderSignals(signals) {
 
 function renderMarkets(markets, signals) {
     $('marketCount').textContent = markets.length + ' markets';
-    $('statMarkets').textContent = markets.length;
+    const mktEl = $('statMarkets'); if (mktEl) mktEl.textContent = markets.length;
     const mBtn = document.getElementById('tabMarketsBtn');
     if (mBtn) mBtn.textContent = markets.length ? `🌤️ Markets (${markets.length})` : '🌤️ Markets';
     if (!markets.length) {
