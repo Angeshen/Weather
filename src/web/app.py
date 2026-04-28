@@ -577,13 +577,12 @@ def api_stats():
 
 @app.route("/api/daily-pnl")
 def api_daily_pnl():
-    """Return daily P&L history derived from bankroll_log (Kalshi-synced).
-    For each day: P&L = last bankroll entry - first bankroll entry.
-    Trade counts still come from daily_pnl table (those are accurate).
+    """Return daily P&L = portfolio (cash + open cost) change per day.
+    Uses bankroll_log (Kalshi-synced) + open position cost at start/end of each day.
     """
     from src.core.trade_executor import get_db
     conn = get_db()
-    # Get daily bankroll deltas from bankroll_log
+    # Get daily bankroll deltas
     bankroll_rows = conn.execute("""
         SELECT DATE(timestamp) as day,
                MIN(CASE WHEN rn = 1 THEN bankroll END) as first_bankroll,
@@ -597,30 +596,44 @@ def api_daily_pnl():
         GROUP BY day
         ORDER BY day DESC LIMIT 60
     """).fetchall()
-    # Build lookup: date -> (first_bankroll, last_bankroll)
     bankroll_by_day = {}
     for r in bankroll_rows:
         if r[1] is not None and r[2] is not None:
             bankroll_by_day[r[0]] = (r[1], r[2])
 
-    # Get trade counts from daily_pnl table
+    # Get trade counts
     count_rows = conn.execute(
         "SELECT date, trades_count, wins, losses FROM daily_pnl ORDER BY date DESC LIMIT 60"
     ).fetchall()
-    conn.close()
     counts_by_day = {r[0]: (r[1], r[2], r[3]) for r in count_rows}
 
-    # Merge: prefer bankroll-derived P&L, use daily_pnl counts
+    # For each day, compute open cost at start and end of day
+    # Open cost at START of day D = sum(position_size_usd) for trades WHERE timestamp < D AND (status='open' OR settled_at >= D)
+    # Open cost at END of day D = sum for trades WHERE timestamp <= end_of_D AND (status='open' OR settled_at > end_of_D)
     all_dates = sorted(set(list(bankroll_by_day.keys()) + list(counts_by_day.keys())))[-30:]
     result = []
     for d in all_dates:
+        next_day = (datetime.strptime(d, "%Y-%m-%d") + __import__('datetime').timedelta(days=1)).strftime("%Y-%m-%d")
+        start_open = conn.execute(
+            "SELECT COALESCE(SUM(position_size_usd), 0) FROM trades "
+            "WHERE timestamp < ? AND (status = 'open' OR (status = 'settled' AND settled_at >= ?))",
+            (d, d)
+        ).fetchone()[0]
+        end_open = conn.execute(
+            "SELECT COALESCE(SUM(position_size_usd), 0) FROM trades "
+            "WHERE timestamp < ? AND (status = 'open' OR (status = 'settled' AND settled_at >= ?))",
+            (next_day, next_day)
+        ).fetchone()[0]
         if d in bankroll_by_day:
             first_b, last_b = bankroll_by_day[d]
-            pnl = round(last_b - first_b, 2)
+            start_portfolio = first_b + start_open
+            end_portfolio = last_b + end_open
+            pnl = round(end_portfolio - start_portfolio, 2)
         else:
             pnl = 0.0
         trades, wins, losses = counts_by_day.get(d, (0, 0, 0))
         result.append({"date": d, "total_pnl": pnl, "trades": trades, "wins": wins, "losses": losses})
+    conn.close()
     return jsonify(result)
 
 
