@@ -156,36 +156,17 @@ def _update_daily_pnl(pnl: float, won: bool, trade_date: str = None):
 
 
 def get_daily_loss_today() -> float:
-    """Get today's realized P&L = portfolio change since start of day.
-    Portfolio = cash (bankroll) + open position cost.
-    Accounts for trades placed today (cost moves from cash to open positions).
+    """Get today's realized P&L = sum of pnl_usd for trades settled today.
+    Simple, correct, no double-counting. Unrealized P&L shown in separate card.
     """
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     conn = get_db()
-    row_start = conn.execute(
-        "SELECT bankroll FROM bankroll_log WHERE timestamp >= ? ORDER BY id ASC LIMIT 1",
+    row = conn.execute(
+        "SELECT COALESCE(SUM(pnl_usd), 0) FROM trades WHERE status='settled' AND settled_at >= ?",
         (today,)
     ).fetchone()
-    row_now = conn.execute(
-        "SELECT bankroll FROM bankroll_log ORDER BY id DESC LIMIT 1"
-    ).fetchone()
-    # Current open cost
-    current_open_cost = conn.execute(
-        "SELECT COALESCE(SUM(position_size_usd), 0) FROM trades WHERE status = 'open'"
-    ).fetchone()[0]
-    # Open cost at start of day = trades opened BEFORE today that are still open
-    # or settled sometime today (they were open at start of day)
-    start_open_cost = conn.execute(
-        "SELECT COALESCE(SUM(position_size_usd), 0) FROM trades "
-        "WHERE timestamp < ? AND (status = 'open' OR (status = 'settled' AND settled_at >= ?))",
-        (today, today)
-    ).fetchone()[0]
     conn.close()
-    if row_start and row_now:
-        start_portfolio = row_start[0] + start_open_cost
-        now_portfolio = row_now[0] + current_open_cost
-        return round(now_portfolio - start_portfolio, 2)
-    return 0.0
+    return round(row[0] if row else 0.0, 2)
 
 
 def get_open_trade_count() -> int:
