@@ -176,6 +176,11 @@ def evaluate_market(market: dict, forecast: dict, bankroll: float) -> dict | Non
     """
     from datetime import date as _date
     ticker = market.get("ticker", "?")
+    # Excluded cities: proven negative P&L over 9+ trades — model doesn't fit these well
+    EXCLUDED_CITIES = {"Denver", "Los Angeles"}
+    if market.get("city") in EXCLUDED_CITIES:
+        print(f"[filter] {ticker}: REJECTED — city {market.get('city')} excluded (negative P&L history)")
+        return None
     try:
         target = _date.fromisoformat(market.get("target_date", ""))
         days_to_expiry = (target - _date.today()).days
