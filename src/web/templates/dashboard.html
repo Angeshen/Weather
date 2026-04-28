@@ -952,7 +952,7 @@ async function loadConfig() {
         const cfg = await api('/api/config');
 
         const riskFields = [
-            {label: 'Bankroll $',         key: 'initial_bankroll',      val: cfg.initial_bankroll,                        step: '500'},
+            {label: 'P&L Baseline $',     key: 'initial_bankroll',      val: cfg.initial_bankroll,                        step: '50'},
             {label: 'Max Trade $',         key: 'max_trade_size',         val: cfg.max_trade_size,                          step: '25'},
             {label: 'Daily Loss Limit $',  key: 'daily_loss_limit',       val: cfg.daily_loss_limit,                        step: '50'},
             {label: 'Kelly Fraction %',    key: 'kelly_fraction',         val: (cfg.kelly_fraction*100).toFixed(0),         step: '5',  convert: 'pct'},

@@ -743,16 +743,8 @@ def api_save_settings():
             except (ValueError, TypeError) as e:
                 return jsonify({"error": f"Invalid value for {key}: {e}"}), 400
 
-    # If initial_bankroll was changed, sync it to bankroll_log so get_current_bankroll() reflects it immediately
-    if "initial_bankroll" in data:
-        try:
-            new_br = float(data["initial_bankroll"])
-            current_br = get_current_bankroll()
-            if abs(new_br - current_br) > 1.0:
-                log_bankroll(new_br, f"Bankroll updated via dashboard to ${new_br:.2f}")
-        except Exception:
-            pass
-
+    # NOTE: initial_bankroll is just a baseline for Total P&L calc — it does NOT
+    # touch bankroll_log. Live cash is auto-synced from Kalshi every scan cycle.
     return jsonify({"updated": updated, "count": len(updated)})
 
 
