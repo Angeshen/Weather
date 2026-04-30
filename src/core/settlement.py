@@ -169,7 +169,7 @@ def settle_open_trades() -> dict:
         # Update trade in DB — store actual temp and settled P&L
         now = datetime.now(timezone.utc).isoformat()
         conn.execute("""
-            UPDATE trades SET status = 'settled', pnl_usd = ?, settled_at = ?, actual_temp = ?
+            UPDATE trades SET status = 'settled', pnl_usd = ?, settled_at = ?, actual_temp = ?, note = 'natural_settle'
             WHERE id = ?
         """, (pnl, now, actual, trade["id"]))
 

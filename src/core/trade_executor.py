@@ -856,8 +856,8 @@ def exit_losing_positions(current_markets: list, client=None) -> list[dict]:
                     continue
             conn = get_db()
             conn.execute(
-                "UPDATE trades SET status = 'settled', pnl_usd = ?, settled_at = ? WHERE id = ?",
-                (realized_pnl, datetime.now(timezone.utc).isoformat(), trade["id"])
+                "UPDATE trades SET status = 'settled', pnl_usd = ?, settled_at = ?, note = ? WHERE id = ?",
+                (realized_pnl, datetime.now(timezone.utc).isoformat(), f"profit_exit_{int(gain_pct)}%", trade["id"])
             )
             conn.commit()
             conn.close()
@@ -934,8 +934,8 @@ def exit_losing_positions(current_markets: list, client=None) -> list[dict]:
         # Mark as settled with loss in DB — only reached if live sell succeeded (or paper)
         conn = get_db()
         conn.execute(
-            "UPDATE trades SET status = 'settled', pnl_usd = ?, settled_at = ? WHERE id = ?",
-            (realized_pnl, datetime.now(timezone.utc).isoformat(), trade["id"])
+            "UPDATE trades SET status = 'settled', pnl_usd = ?, settled_at = ?, note = ? WHERE id = ?",
+            (realized_pnl, datetime.now(timezone.utc).isoformat(), f"stop_loss_{int(loss_pct*100)}%", trade["id"])
         )
         conn.commit()
         conn.close()
