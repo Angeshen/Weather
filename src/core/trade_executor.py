@@ -822,19 +822,26 @@ def exit_losing_positions(current_markets: list, client=None) -> list[dict]:
             except Exception:
                 pass
 
-        # Profit target exit: ONLY exit early if bid is near-certain (>=95c).
-        # Key insight: selling triggers a ~1-2¢/contract fee. Holding to settlement = no sell fee.
-        # With 80% win rate and avg loss > avg win, the math favors holding ALL winners
-        # to settlement. Only sell when there's almost no upside left (95¢+).
+        # Profit target exit: grab spikes aggressively. Data shows:
+        #   - Early exits (<4h) = +$175 realized over 32 trades
+        #   - Full-day holds (>8h) = -$62 realized over 77 trades
+        # Weather markets mean-revert after forecast updates, so locking gains is +EV.
+        #   1. Bid 30%+ above entry (worth the sell fee)
+        #   2. At least 4¢/contract profit (covers Kalshi fees)
+        #   3. Exit spread ≤8¢ (real demand to sell into)
+        #   4. Trade at least 5 min old (avoid bid/ask bounce)
+        #   5. OR bid ≥90¢ (near-certain — lock it vs tail risk)
         max_payout_per_contract = 1.0 - entry_price
-        # Check exit spread — only sell if there's real demand (tight spread)
+        profit_target = entry_price * 1.30  # 30% gain
+        min_profit_per_contract = 0.04
         if side == "yes":
             exit_ask = market.get("yes_ask") or 0
         else:
             exit_ask = market.get("no_ask") or 0
         exit_spread = (exit_ask - current_bid) if exit_ask and current_bid else 99
-        near_certain = current_bid >= 0.95  # Only lock in near-100% certainties
-        if (near_certain
+        near_certain = current_bid >= 0.90
+        if (((current_bid >= profit_target and current_bid - entry_price >= min_profit_per_contract)
+                or near_certain)
                 and exit_spread <= 0.08
                 and age_seconds > 300):
             realized_pnl = round(current_value - cost, 2)
